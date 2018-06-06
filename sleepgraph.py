@@ -61,6 +61,8 @@ import gzip
 from threading import Thread
 from subprocess import call, Popen, PIPE
 
+TODDFIX = False
+
 # ----------------- CLASSES --------------------
 
 # Class: SystemValues
@@ -862,7 +864,6 @@ class DeviceNode:
 #
 class Data:
 	dmesg = {}  # root data structure
-	phases = [] # ordered list of phases
 	start = 0.0 # test start
 	end = 0.0   # test end
 	tSuspended = 0.0 # low-level suspend start
@@ -883,41 +884,32 @@ class Data:
 	devpids = []
 	kerror = False
 	battery = 0
+	phasedef = {
+		'suspend_prepare': {'order': 0, 'color': '#CCFFCC'},
+		        'suspend': {'order': 1, 'color': '#88FF88'},
+		   'suspend_late': {'order': 2, 'color': '#00AA00'},
+		  'suspend_noirq': {'order': 3, 'color': '#008888'},
+		'suspend_machine': {'order': 4, 'color': '#0000FF'},
+		 'resume_machine': {'order': 5, 'color': '#FF0000'},
+		   'resume_noirq': {'order': 6, 'color': '#FF9900'},
+		   'resume_early': {'order': 7, 'color': '#FFCC00'},
+		         'resume': {'order': 8, 'color': '#FFFF88'},
+		'resume_complete': {'order': 9, 'color': '#FFFFCC'},
+	}
 	def __init__(self, num):
 		idchar = 'abcdefghij'
 		self.pstl = dict()
 		self.testnumber = num
 		self.idstr = idchar[num]
 		self.dmesgtext = []
-		self.phases = []
-		self.dmesg = { # fixed list of 10 phases
-			'suspend_prepare': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#CCFFCC', 'order': 0},
-			        'suspend': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#88FF88', 'order': 1},
-			   'suspend_late': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#00AA00', 'order': 2},
-			  'suspend_noirq': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#008888', 'order': 3},
-		    'suspend_machine': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#0000FF', 'order': 4},
-			 'resume_machine': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#FF0000', 'order': 5},
-			   'resume_noirq': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#FF9900', 'order': 6},
-			   'resume_early': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#FFCC00', 'order': 7},
-			         'resume': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#FFFF88', 'order': 8},
-			'resume_complete': {'list': dict(), 'start': -1.0, 'end': -1.0,
-								'row': 0, 'color': '#FFFFCC', 'order': 9}
-		}
+		self.dmesg = dict()
 		self.errorinfo = {'suspend':[],'resume':[]}
-		self.updatePhases()
-	def updatePhases(self):
-		self.phases = self.sortedPhases()
+	def sortedPhases(self):
+		return sorted(self.dmesg, key=lambda k:self.dmesg[k]['order'])
+	def initDevicegroups(self):
+		# called when phases are all finished being added
 		self.devicegroups = []
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			self.devicegroups.append([phase])
 	def nextPhase(self, phase, offset):
 		order = self.dmesg[phase]['order'] + offset
@@ -925,6 +917,11 @@ class Data:
 			if self.dmesg[p]['order'] == order:
 				return p
 		return ''
+	def lastPhase(self):
+		plist = self.sortedPhases()
+		if len(plist) < 1:
+			return ''
+		return plist[-1]
 	def extractErrorInfo(self):
 		elist = {
 			'HWERROR' : '.*\[ *Hardware Error *\].*',
@@ -965,7 +962,7 @@ class Data:
 	def setEnd(self, time):
 		self.end = time
 	def isTraceEventOutsideDeviceCalls(self, pid, time):
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			list = self.dmesg[phase]['list']
 			for dev in list:
 				d = list[dev]
@@ -974,7 +971,7 @@ class Data:
 					return False
 		return True
 	def sourcePhase(self, start):
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			pend = self.dmesg[phase]['end']
 			if start <= pend:
 				return phase
@@ -1005,14 +1002,15 @@ class Data:
 		return tgtdev
 	def addDeviceFunctionCall(self, displayname, kprobename, proc, pid, start, end, cdata, rdata):
 		# try to place the call in a device
-		tgtdev = self.sourceDevice(self.phases, start, end, pid, 'device')
+		phases = self.sortedPhases()
+		tgtdev = self.sourceDevice(phases, start, end, pid, 'device')
 		# calls with device pids that occur outside device bounds are dropped
 		# TODO: include these somehow
 		if not tgtdev and pid in self.devpids:
 			return False
 		# try to place the call in a thread
 		if not tgtdev:
-			tgtdev = self.sourceDevice(self.phases, start, end, pid, 'thread')
+			tgtdev = self.sourceDevice(phases, start, end, pid, 'thread')
 		# create new thread blocks, expand as new calls are found
 		if not tgtdev:
 			if proc == '<...>':
@@ -1054,7 +1052,7 @@ class Data:
 	def overflowDevices(self):
 		# get a list of devices that extend beyond the end of this test run
 		devlist = []
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			list = self.dmesg[phase]['list']
 			for devname in list:
 				dev = list[devname]
@@ -1065,7 +1063,7 @@ class Data:
 		# merge any devices that overlap devlist
 		for dev in devlist:
 			devname = dev['name']
-			for phase in self.phases:
+			for phase in self.sortedPhases():
 				list = self.dmesg[phase]['list']
 				if devname not in list:
 					continue
@@ -1080,7 +1078,7 @@ class Data:
 				del list[devname]
 	def usurpTouchingThread(self, name, dev):
 		# the caller test has priority of this thread, give it to him
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			list = self.dmesg[phase]['list']
 			if name in list:
 				tdev = list[name]
@@ -1094,7 +1092,7 @@ class Data:
 				break
 	def stitchTouchingThreads(self, testlist):
 		# merge any threads between tests that touch
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			list = self.dmesg[phase]['list']
 			for devname in list:
 				dev = list[devname]
@@ -1104,7 +1102,7 @@ class Data:
 					data.usurpTouchingThread(devname, dev)
 	def optimizeDevSrc(self):
 		# merge any src call loops to reduce timeline size
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			list = self.dmesg[phase]['list']
 			for dev in list:
 				if 'src' not in list[dev]:
@@ -1142,7 +1140,7 @@ class Data:
 		self.tKernSus = self.trimTimeVal(self.tKernSus, t0, dT, left)
 		self.tKernRes = self.trimTimeVal(self.tKernRes, t0, dT, left)
 		self.end = self.trimTimeVal(self.end, t0, dT, left)
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			p = self.dmesg[phase]
 			p['start'] = self.trimTimeVal(p['start'], t0, dT, left)
 			p['end'] = self.trimTimeVal(p['end'], t0, dT, left)
@@ -1178,20 +1176,26 @@ class Data:
 				self.trimTime(self.tSuspended, \
 					self.tResumed-self.tSuspended, False)
 	def getTimeValues(self):
-		sktime = (self.dmesg['suspend_machine']['end'] - \
-			self.tKernSus) * 1000
-		rktime = (self.tKernRes - \
-			self.dmesg['resume_machine']['start']) * 1000
+		if 'suspend_machine' in self.dmesg:
+			sktime = (self.dmesg['suspend_machine']['end'] - \
+				self.tKernSus) * 1000
+		else:
+			sktime = (self.tSuspended - self.tKernSus) * 1000
+		if 'resume_machine' in self.dmesg:
+			rktime = (self.tKernRes - \
+				self.dmesg['resume_machine']['start']) * 1000
+		else:
+			rktime = (self.tKernRes - self.tResumed) * 1000
 		return (sktime, rktime)
-	def setPhase(self, phase, ktime, isbegin):
+	def setPhase(self, phase, ktime, isbegin, order=-1):
 		if(isbegin):
+			count = len(self.dmesg.keys()) if order < 0 else order
+			self.dmesg[phase] = {'list': dict(), 'start': -1.0, 'end': -1.0,
+				'row': 0, 'color': self.phasedef[phase]['color'],
+				'order': count}
 			self.dmesg[phase]['start'] = ktime
 		else:
 			self.dmesg[phase]['end'] = ktime
-	def dmesgSortVal(self, phase):
-		return self.dmesg[phase]['order']
-	def sortedPhases(self):
-		return sorted(self.dmesg, key=self.dmesgSortVal)
 	def sortedDevices(self, phase):
 		list = self.dmesg[phase]['list']
 		slist = []
@@ -1210,13 +1214,13 @@ class Data:
 		for devname in phaselist:
 			dev = phaselist[devname]
 			if(dev['end'] < 0):
-				for p in self.phases:
+				for p in self.sortedPhases():
 					if self.dmesg[p]['end'] > dev['start']:
 						dev['end'] = self.dmesg[p]['end']
 						break
 				sysvals.vprint('%s (%s): callback didnt return' % (devname, phase))
 	def deviceFilter(self, devicefilter):
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			list = self.dmesg[phase]['list']
 			rmlist = []
 			for name in list:
@@ -1231,7 +1235,7 @@ class Data:
 				del list[name]
 	def fixupInitcallsThatDidntReturn(self):
 		# if any calls never returned, clip them at system resume end
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			self.fixupInitcalls(phase)
 	def phaseOverlap(self, phases):
 		rmgroups = []
@@ -1250,17 +1254,18 @@ class Data:
 		self.devicegroups.append(newgroup)
 	def newActionGlobal(self, name, start, end, pid=-1, color=''):
 		# which phase is this device callback or action in
+		phases = self.sortedPhases()
 		targetphase = 'none'
 		htmlclass = ''
 		overlap = 0.0
-		phases = []
-		for phase in self.phases:
+		myphases = []
+		for phase in phases:
 			pstart = self.dmesg[phase]['start']
 			pend = self.dmesg[phase]['end']
 			# see if the action overlaps this phase
 			o = max(0, min(end, pend) - max(start, pstart))
 			if o > 0:
-				phases.append(phase)
+				myphases.append(phase)
 			# set the target phase to the one that overlaps most
 			if o > overlap:
 				if overlap > 0 and phase == 'post_resume':
@@ -1269,19 +1274,19 @@ class Data:
 				overlap = o
 		# if no target phase was found, pin it to the edge
 		if targetphase == 'none':
-			p0start = self.dmesg[self.phases[0]]['start']
+			p0start = self.dmesg[phases[0]]['start']
 			if start <= p0start:
-				targetphase = self.phases[0]
+				targetphase = phases[0]
 			else:
-				targetphase = self.phases[-1]
+				targetphase = phases[-1]
 		if pid == -2:
 			htmlclass = ' bg'
 		elif pid == -3:
 			htmlclass = ' ps'
-		if len(phases) > 1:
+		if len(myphases) > 1:
 			htmlclass = ' bg'
-			self.phaseOverlap(phases)
-		if targetphase in self.phases:
+			self.phaseOverlap(myphases)
+		if targetphase in phases:
 			newname = self.newAction(targetphase, name, pid, '', start, end, '', htmlclass, color)
 			return (targetphase, newname)
 		return False
@@ -1317,7 +1322,7 @@ class Data:
 		sysvals.vprint('Timeline Details:')
 		sysvals.vprint('          test start: %f' % self.start)
 		sysvals.vprint('kernel suspend start: %f' % self.tKernSus)
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			dc = len(self.dmesg[phase]['list'])
 			sysvals.vprint('    %16s: %f - %f (%d devices)' % (phase, \
 				self.dmesg[phase]['start'], self.dmesg[phase]['end'], dc))
@@ -1325,7 +1330,7 @@ class Data:
 		sysvals.vprint('            test end: %f' % self.end)
 	def deviceChildrenAllPhases(self, devname):
 		devlist = []
-		for phase in self.phases:
+		for phase in self.sortedPhases():
 			list = self.deviceChildren(devname, phase)
 			for dev in list:
 				if dev not in devlist:
@@ -1346,7 +1351,7 @@ class Data:
 		if node.name:
 			info = ''
 			drv = ''
-			for phase in self.phases:
+			for phase in self.sortedPhases():
 				list = self.dmesg[phase]['list']
 				if node.name in list:
 					s = list[node.name]['start']
@@ -1481,7 +1486,7 @@ class Data:
 			if c > 0:
 				sysvals.vprint('%25s (res): %d' % (ps, c))
 	def debugPrint(self):
-		for p in self.phases:
+		for p in self.sortedPhases():
 			list = self.dmesg[p]['list']
 			for devname in list:
 				dev = list[devname]
@@ -1945,7 +1950,7 @@ class FTraceCallGraph:
 						dev['ftrace'] = cg
 					found = devname
 			return found
-		for p in data.phases:
+		for p in data.sortedPhases():
 			if(data.dmesg[p]['start'] <= self.start and
 				self.start <= data.dmesg[p]['end']):
 				list = data.dmesg[p]['list']
@@ -1968,7 +1973,7 @@ class FTraceCallGraph:
 		if fs < data.start or fe > data.end:
 			return
 		phase = ''
-		for p in data.phases:
+		for p in data.sortedPhases():
 			if(data.dmesg[p]['start'] <= self.start and
 				self.start < data.dmesg[p]['end']):
 				phase = p
@@ -2634,7 +2639,7 @@ def appendIncompleteTraceLog(testruns):
 					continue
 				callstart = cg.start
 				callend = cg.end
-				for p in test.data.phases:
+				for p in test.data.sortedPhases():
 					if(test.data.dmesg[p]['start'] <= callstart and
 						callstart <= test.data.dmesg[p]['end']):
 						list = test.data.dmesg[p]['list']
@@ -2731,13 +2736,14 @@ def parseTraceLog(live=False):
 			continue
 		# find the start of suspend
 		if(t.startMarker()):
-			phase = 'suspend_prepare'
 			data = Data(len(testdata))
 			testdata.append(data)
 			testrun = TestRun(data)
 			testruns.append(testrun)
 			tp.parseStamp(data, sysvals)
 			data.setStart(t.time)
+			phase = 'suspend_prepare'
+			data.setPhase(phase, t.time, True)
 			continue
 		if(not data):
 			continue
@@ -2756,16 +2762,27 @@ def parseTraceLog(live=False):
 				continue
 		# find the end of resume
 		if(t.endMarker()):
-			if data.dmesg['resume_machine']['end'] < 0:
-				np = data.nextPhase('resume_machine', 1)
-				data.dmesg['resume_machine']['end'] = data.dmesg[np]['start']
+			dm = data.dmesg
 			data.setEnd(t.time)
+			data.initDevicegroups()
+			# give suspend_prepare an end if needed
+			if 'suspend_prepare' in dm and dm['suspend_prepare']['end'] < 0:
+				dm['suspend_prepare']['end'] = t.time
+			# assume resume machine ends at next phase start
+			if 'resume_machine' in dm and dm['resume_machine']['end'] < 0:
+				np = data.nextPhase('resume_machine', 1)
+				if np:
+					dm['resume_machine']['end'] = dm[np]['start']
+			# if kernel resume end not found, assume its the end marker
 			if data.tKernRes == 0.0:
 				data.tKernRes = t.time
-			data.dmesg['suspend_prepare']['start'] = data.start
-			if data.dmesg['suspend_prepare']['end'] < 0:
-				data.dmesg['suspend_prepare']['end'] = t.time
-			data.dmesg['resume_complete']['end'] = t.time
+			# if kernel suspend start not found, assume its the end marker
+			if data.tKernSus == 0.0:
+				data.tKernSus = t.time
+			# set resume complete to end at end marker
+			if 'resume_complete' in dm:
+				dm['resume_complete']['end'] = t.time
+			# check the firmware data for validity
 			if sysvals.suspendmode == 'mem' and len(tp.fwdata) > data.testnumber:
 				data.fwSuspend, data.fwResume = tp.fwdata[data.testnumber]
 				if(data.tSuspended != 0 and data.tResumed != 0 and \
@@ -2781,8 +2798,6 @@ def parseTraceLog(live=False):
 			continue
 		# trace event processing
 		if(t.fevent):
-			if(phase == 'post_resume'):
-				data.setEnd(t.time)
 			if(t.type == 'suspend_resume'):
 				# suspend_resume trace events have two types, begin and end
 				if(re.match('(?P<name>.*) begin$', t.name)):
@@ -2813,7 +2828,8 @@ def parseTraceLog(live=False):
 				# suspend_prepare start
 				elif(re.match('dpm_prepare\[.*', t.name)):
 					phase = 'suspend_prepare'
-					data.setPhase(phase, t.time, isbegin)
+					if not isbegin:
+						data.setPhase(phase, t.time, isbegin)
 					if isbegin and data.tKernSus == 0:
 						data.tKernSus = t.time
 					continue
@@ -2836,16 +2852,16 @@ def parseTraceLog(live=False):
 				elif(re.match('machine_suspend\[.*', t.name)):
 					if(isbegin):
 						phase = 'suspend_machine'
-						lp = data.nextPhase(phase, -1)
-						data.dmesg[phase]['start'] = data.dmesg[lp]['end']
+						lp = data.lastPhase()
+						data.setPhase(phase, data.dmesg[lp]['end'], True)
 						data.dmesg[phase]['end'] = t.time
 						data.tSuspended = t.time
 					else:
 						phase = 'resume_machine'
+						data.setPhase(phase, t.time, True)
 						if(sysvals.suspendmode in ['mem', 'disk']):
 							data.dmesg['suspend_machine']['end'] = t.time
 							data.tSuspended = t.time
-						data.dmesg[phase]['start'] = t.time
 						data.tResumed = t.time
 						data.tLow = data.tResumed - data.tSuspended
 					continue
@@ -2883,13 +2899,10 @@ def parseTraceLog(live=False):
 					if(len(testrun.ttemp[name]) > 0):
 						# if an entry exists, assume this is its end
 						testrun.ttemp[name][-1]['end'] = t.time
-					elif(phase == 'post_resume'):
-						# post resume events can just have ends
-						testrun.ttemp[name].append({
-							'begin': data.dmesg[phase]['start'],
-							'end': t.time})
 			# device callback start
 			elif(t.type == 'device_pm_callback_start'):
+				if phase not in data.dmesg:
+					continue
 				m = re.match('(?P<drv>.*) (?P<d>.*), parent: *(?P<p>.*), .*',\
 					t.name);
 				if(not m):
@@ -2903,6 +2916,8 @@ def parseTraceLog(live=False):
 						data.devpids.append(pid)
 			# device callback finish
 			elif(t.type == 'device_pm_callback_end'):
+				if phase not in data.dmesg:
+					continue
 				m = re.match('(?P<drv>.*) (?P<d>.*), err.*', t.name);
 				if(not m):
 					continue
@@ -2945,7 +2960,8 @@ def parseTraceLog(live=False):
 				# end of kernel resume
 				if(kprobename == 'pm_notifier_call_chain' or \
 					kprobename == 'pm_restore_console'):
-					data.dmesg[phase]['end'] = t.time
+					if phase in data.dmesg:
+						data.dmesg[phase]['end'] = t.time
 					data.tKernRes = t.time
 
 		# callgraph processing
@@ -2964,9 +2980,25 @@ def parseTraceLog(live=False):
 				testrun.ftemp[key][-1].addLine(t)
 	tf.close()
 
+	# REMOVE ME ---------
+	if TODDFIX:
+		for data in testdata:
+			phasedef = data.phasedef
+			for phase in sorted(phasedef, key=lambda k:phasedef[k]['order']):
+				if phase == 'suspend_prepare':
+					continue
+				if phase not in data.dmesg:
+					data.setPhase(phase, -1, True, phasedef[phase]['order'])
+					if phase == 'resume_complete':
+						data.dmesg['resume_complete']['end'] = data.end
+				else:
+					data.dmesg[phase]['order'] = phasedef[phase]['order']
+			data.initDevicegroups()
+	# REMOVE ME ---------
+
 	if sysvals.suspendmode == 'command':
 		for test in testruns:
-			for p in test.data.phases:
+			for p in test.data.sortedPhases():
 				if p == 'suspend_prepare':
 					test.data.dmesg[p]['start'] = test.data.start
 					test.data.dmesg[p]['end'] = test.data.end
@@ -3059,25 +3091,52 @@ def parseTraceLog(live=False):
 	for data in testdata:
 		tn = '' if len(testdata) == 1 else ('%d' % (data.testnumber + 1))
 		terr = ''
-		lp = data.phases[0]
-		for p in data.phases:
-			if(data.dmesg[p]['start'] < 0 and data.dmesg[p]['end'] < 0):
-				if not terr:
-					print 'TEST%s FAILED: %s failed in %s phase' % (tn, sysvals.suspendmode, lp)
-					terr = '%s%s failed in %s phase' % (sysvals.suspendmode, tn, lp)
-					error.append(terr)
-				sysvals.vprint('WARNING: phase "%s" is missing!' % p)
-			if(data.dmesg[p]['start'] < 0):
-				data.dmesg[p]['start'] = data.dmesg[lp]['end']
-				if(p == 'resume_machine'):
-					data.tSuspended = data.dmesg[lp]['end']
-					data.tResumed = data.dmesg[lp]['end']
-					data.tLow = 0
-			if(data.dmesg[p]['end'] < 0):
-				data.dmesg[p]['end'] = data.dmesg[p]['start']
-			if(p != lp and not ('machine' in p and 'machine' in lp)):
-				data.dmesg[lp]['end'] = data.dmesg[p]['start']
-			lp = p
+		# REMOVE ME ---------
+		if TODDFIX:
+			lp = data.sortedPhases()[0]
+			for p in data.sortedPhases():
+				if(data.dmesg[p]['start'] < 0 and data.dmesg[p]['end'] < 0):
+					if not terr:
+						print 'TEST%s FAILED: %s failed in %s phase' % (tn, sysvals.suspendmode, lp)
+						terr = '%s%s failed in %s phase' % (sysvals.suspendmode, tn, lp)
+						error.append(terr)
+					sysvals.vprint('WARNING: phase "%s" is missing!' % p)
+				if(data.dmesg[p]['start'] < 0):
+					data.dmesg[p]['start'] = data.dmesg[lp]['end']
+					if(p == 'resume_machine'):
+						data.tSuspended = data.dmesg[lp]['end']
+						data.tResumed = data.dmesg[lp]['end']
+						data.tLow = 0
+				if(data.dmesg[p]['end'] < 0):
+					data.dmesg[p]['end'] = data.dmesg[p]['start']
+				if(p != lp and not ('machine' in p and 'machine' in lp)):
+					data.dmesg[lp]['end'] = data.dmesg[p]['start']
+				lp = p
+		else:
+		# REMOVE ME ---------
+			phasedef = data.phasedef
+			lp = 'suspend_prepare'
+			for p in sorted(phasedef, key=lambda k:phasedef[k]['order']):
+				if p not in data.dmesg:
+					if not terr:
+						print 'TEST%s FAILED: %s failed in %s phase' % (tn, sysvals.suspendmode, lp)
+						terr = '%s%s failed in %s phase' % (sysvals.suspendmode, tn, lp)
+						error.append(terr)
+						if data.tSuspended == 0:
+							data.tSuspended = data.dmesg[lp]['end']
+						if data.tResumed == 0:
+							data.tResumed = data.dmesg[lp]['end']
+					sysvals.vprint('WARNING: phase "%s" is missing!' % p)
+				lp = p
+			lp = data.sortedPhases()[0]
+			for p in data.sortedPhases():
+				if(p != lp and not ('machine' in p and 'machine' in lp)):
+					data.dmesg[lp]['end'] = data.dmesg[p]['start']
+				lp = p
+			if data.tSuspended == 0:
+				data.tSuspended = data.tKernRes
+			if data.tResumed == 0:
+				data.tResumed = data.tSuspended
 
 		if(len(sysvals.devicefilter) > 0):
 			data.deviceFilter(sysvals.devicefilter)
@@ -3343,7 +3402,7 @@ def parseKernelLog(data):
 			break
 
 		# -- device callbacks --
-		if(phase in data.phases):
+		if(phase in data.sortedPhases()):
 			# device init call
 			if(re.match('calling  (?P<f>.*)\+ @ .*, parent: .*', msg)):
 				sm = re.match('calling  (?P<f>.*)\+ @ '+\
@@ -3403,8 +3462,8 @@ def parseKernelLog(data):
 		prevktime = ktime
 
 	# fill in any missing phases
-	lp = data.phases[0]
-	for p in data.phases:
+	lp = data.sortedPhases()[0]
+	for p in data.sortedPhases():
 		if(data.dmesg[p]['start'] < 0 and data.dmesg[p]['end'] < 0):
 			print('WARNING: phase "%s" is missing, something went wrong!' % p)
 			print('    In %s, this dmesg line denotes the start of %s:' % \
@@ -3467,7 +3526,7 @@ def addCallgraphs(sv, hf, data):
 	hf.write('<section id="callgraphs" class="callgraph">\n')
 	# write out the ftrace data converted to html
 	num = 0
-	for p in data.phases:
+	for p in data.sortedPhases():
 		if sv.cgphase and p != sv.cgphase:
 			continue
 		list = data.dmesg[p]['list']
@@ -3949,19 +4008,17 @@ def createHTML(testruns, testfail):
 
 	# draw a legend which describes the phases by color
 	if sysvals.suspendmode != 'command':
-		data = testruns[-1]
+		phasedef = testruns[-1].phasedef
 		devtl.html += '<div class="legend">\n'
-		pdelta = 100.0/len(data.phases)
+		pdelta = 100.0/len(phasedef.keys())
 		pmargin = pdelta / 4.0
-		for phase in data.phases:
-			tmp = phase.split('_')
-			id = tmp[0][0]
-			if(len(tmp) > 1):
-				id += tmp[1][0]
-			order = '%.2f' % ((data.dmesg[phase]['order'] * pdelta) + pmargin)
+		for phase in sorted(phasedef, key=lambda k:phasedef[k]['order']):
+			id, p = '', phasedef[phase]
+			for word in phase.split('_'):
+				id += word[0]
+			order = '%.2f' % ((p['order'] * pdelta) + pmargin)
 			name = string.replace(phase, '_', ' &nbsp;')
-			devtl.html += devtl.html_legend.format(order, \
-				data.dmesg[phase]['color'], name, id)
+			devtl.html += devtl.html_legend.format(order, p['color'], name, id)
 		devtl.html += '</div>\n'
 
 	hf = open(sysvals.htmlfile, 'w')
@@ -3977,7 +4034,7 @@ def createHTML(testruns, testfail):
 		pscolor = 'linear-gradient(to top left, #ccc, #eee)'
 		hf.write(devtl.html_phaselet.format('pre_suspend_process', \
 			'0', '0', pscolor))
-		for b in data.phases:
+		for b in data.sortedPhases():
 			phase = data.dmesg[b]
 			length = phase['end']-phase['start']
 			left = '%.3f' % (((phase['start']-t0)*100.0)/tTotal)
@@ -5565,9 +5622,9 @@ def configFromFile(file):
 				sysvals.cgtest = getArgInt('cgtest', value, 0, 1, False)
 			elif(option == 'cgphase'):
 				d = Data(0)
-				if value not in d.phases:
+				if value not in d.sortedPhases():
 					doError('invalid phase --> (%s: %s), valid phases are %s'\
-						% (option, value, d.phases), True)
+						% (option, value, d.sortedPhases()), True)
 				sysvals.cgphase = value
 			elif(option == 'fadd'):
 				file = sysvals.configFile(value)
@@ -5891,9 +5948,9 @@ if __name__ == '__main__':
 			except:
 				doError('No phase name supplied', True)
 			d = Data(0)
-			if val not in d.phases:
+			if val not in d.phasedef:
 				doError('invalid phase --> (%s: %s), valid phases are %s'\
-					% (arg, val, d.phases), True)
+					% (arg, val, d.phasedef.keys()), True)
 			sysvals.cgphase = val
 		elif(arg == '-cgfilter'):
 			try:
