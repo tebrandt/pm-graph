@@ -3263,30 +3263,30 @@ def parseKernelLog(data):
 
 	# dmesg phase match table
 	dm = {
-		'suspend_prepare': 'PM: Syncing filesystems.*',
-		        'suspend': 'PM: Entering [a-z]* sleep.*',
-		   'suspend_late': 'PM: suspend of devices complete after.*',
-		  'suspend_noirq': 'PM: late suspend of devices complete after.*',
-		'suspend_machine': 'PM: noirq suspend of devices complete after.*',
-		 'resume_machine': 'ACPI: Low-level resume complete.*',
-		   'resume_noirq': 'ACPI: Waking up from system sleep state.*',
-		   'resume_early': 'PM: noirq resume of devices complete after.*',
-		         'resume': 'PM: early resume of devices complete after.*',
-		'resume_complete': 'PM: resume of devices complete after.*',
-		    'post_resume': '.*Restarting tasks \.\.\..*',
+		'suspend_prepare': ['PM: Syncing filesystems.*'],
+		        'suspend': ['PM: Entering [a-z]* sleep.*', 'Suspending console.*'],
+		   'suspend_late': ['PM: suspend of devices complete after.*'],
+		  'suspend_noirq': ['PM: late suspend of devices complete after.*'],
+		'suspend_machine': ['PM: noirq suspend of devices complete after.*'],
+		 'resume_machine': ['ACPI: Low-level resume complete.*'],
+		   'resume_noirq': ['ACPI: Waking up from system sleep state.*'],
+		   'resume_early': ['PM: noirq resume of devices complete after.*'],
+		         'resume': ['PM: early resume of devices complete after.*'],
+		'resume_complete': ['PM: resume of devices complete after.*'],
+		    'post_resume': ['.*Restarting tasks \.\.\..*'],
 	}
 	if(sysvals.suspendmode == 'standby'):
-		dm['resume_machine'] = 'PM: Restoring platform NVS memory'
+		dm['resume_machine'] = ['PM: Restoring platform NVS memory']
 	elif(sysvals.suspendmode == 'disk'):
-		dm['suspend_late'] = 'PM: freeze of devices complete after.*'
-		dm['suspend_noirq'] = 'PM: late freeze of devices complete after.*'
-		dm['suspend_machine'] = 'PM: noirq freeze of devices complete after.*'
-		dm['resume_machine'] = 'PM: Restoring platform NVS memory'
-		dm['resume_early'] = 'PM: noirq restore of devices complete after.*'
-		dm['resume'] = 'PM: early restore of devices complete after.*'
-		dm['resume_complete'] = 'PM: restore of devices complete after.*'
+		dm['suspend_late'] = ['PM: freeze of devices complete after.*']
+		dm['suspend_noirq'] = ['PM: late freeze of devices complete after.*']
+		dm['suspend_machine'] = ['PM: noirq freeze of devices complete after.*']
+		dm['resume_machine'] = ['PM: Restoring platform NVS memory']
+		dm['resume_early'] = ['PM: noirq restore of devices complete after.*']
+		dm['resume'] = ['PM: early restore of devices complete after.*']
+		dm['resume_complete'] = ['PM: restore of devices complete after.*']
 	elif(sysvals.suspendmode == 'freeze'):
-		dm['resume_machine'] = 'ACPI: resume from mwait'
+		dm['resume_machine'] = ['ACPI: resume from mwait']
 
 	# action table (expected events that occur and show up in dmesg)
 	at = {
@@ -3328,100 +3328,87 @@ def parseKernelLog(data):
 		else:
 			continue
 
+		# check for a phase change line
+		phasechange = False
+		for p in dm:
+			for s in dm[p]:
+				if(re.match(s, msg)):
+					phasechange, phase = True, p
+					break
+
 		# hack for determining resume_machine end for freeze
 		if(not sysvals.usetraceevents and sysvals.suspendmode == 'freeze' \
 			and phase == 'resume_machine' and \
 			re.match('calling  (?P<f>.*)\+ @ .*, parent: .*', msg)):
-			data.dmesg['resume_machine']['end'] = ktime
+			data.setPhase(phase, ktime, False)
 			phase = 'resume_noirq'
-			data.dmesg[phase]['start'] = ktime
+			data.setPhase(phase, ktime, True)
 
-		# suspend start
-		if(re.match(dm['suspend_prepare'], msg)):
-			phase = 'suspend_prepare'
-			data.setPhase(phase, ktime, True)
-			data.setStart(ktime)
-			data.tKernSus = ktime
-		# suspend start
-		elif(re.match(dm['suspend'], msg)):
-			phase = 'suspend'
-			print msg
-			lp = data.lastPhase()
-			if lp:
-				data.setPhase(lp, ktime, False)
-			data.setPhase(phase, ktime, True)
-		# suspend_late start
-		elif(re.match(dm['suspend_late'], msg)):
-			phase = 'suspend_late'
-			lp = data.lastPhase()
-			if lp:
-				data.setPhase(lp, ktime, False)
-			data.setPhase(phase, ktime, True)
-		# suspend_noirq start
-		elif(re.match(dm['suspend_noirq'], msg)):
-			phase = 'suspend_noirq'
-			lp = data.lastPhase()
-			if lp:
-				data.setPhase(lp, ktime, False)
-			data.setPhase(phase, ktime, True)
-		# suspend_machine start
-		elif(re.match(dm['suspend_machine'], msg)):
-			phase = 'suspend_machine'
-			lp = data.lastPhase()
-			if lp:
-				data.setPhase(lp, ktime, False)
-			data.setPhase(phase, ktime, True)
-		# resume_machine start
-		elif(re.match(dm['resume_machine'], msg)):
-			lp = data.lastPhase()
-			if(sysvals.suspendmode in ['freeze', 'standby']):
-				data.tSuspended = prevktime
+		if phasechange:
+			if phase == 'suspend_prepare':
+				data.setPhase(phase, ktime, True)
+				data.setStart(ktime)
+				data.tKernSus = ktime
+			elif phase == 'suspend':
+				lp = data.lastPhase()
 				if lp:
-					data.setPhase(lp, prevktime, False)
-			else:
-				data.tSuspended = ktime
+					data.setPhase(lp, ktime, False)
+				data.setPhase(phase, ktime, True)
+			elif phase == 'suspend_late':
+				lp = data.lastPhase()
 				if lp:
-					data.setPhase(lp, prevktime, False)
-			phase = 'resume_machine'
-			data.tResumed = ktime
-			data.tLow = data.tResumed - data.tSuspended
-			data.setPhase(phase, ktime, True)
-		# resume_noirq start
-		elif(re.match(dm['resume_noirq'], msg)):
-			phase = 'resume_noirq'
-			lp = data.lastPhase()
-			if lp:
-				data.setPhase(lp, ktime, False)
-			data.setPhase(phase, ktime, True)
-		# resume_early start
-		elif(re.match(dm['resume_early'], msg)):
-			phase = 'resume_early'
-			lp = data.lastPhase()
-			if lp:
-				data.setPhase(lp, ktime, False)
-			data.setPhase(phase, ktime, True)
-		# resume start
-		elif(re.match(dm['resume'], msg)):
-			phase = 'resume'
-			lp = data.lastPhase()
-			if lp:
-				data.setPhase(lp, ktime, False)
-			data.setPhase(phase, ktime, True)
-		# resume complete start
-		elif(re.match(dm['resume_complete'], msg)):
-			phase = 'resume_complete'
-			lp = data.lastPhase()
-			if lp:
-				data.setPhase(lp, ktime, False)
-			data.setPhase(phase, ktime, True)
-		# post resume start
-		elif(re.match(dm['post_resume'], msg)):
-			lp = data.lastPhase()
-			if lp:
-				data.setPhase(lp, ktime, False)
-			data.setEnd(ktime)
-			data.tKernRes = ktime
-			break
+					data.setPhase(lp, ktime, False)
+				data.setPhase(phase, ktime, True)
+			elif phase == 'suspend_noirq':
+				lp = data.lastPhase()
+				if lp:
+					data.setPhase(lp, ktime, False)
+				data.setPhase(phase, ktime, True)
+			elif phase == 'suspend_machine':
+				lp = data.lastPhase()
+				if lp:
+					data.setPhase(lp, ktime, False)
+				data.setPhase(phase, ktime, True)
+			elif phase == 'resume_machine':
+				lp = data.lastPhase()
+				if(sysvals.suspendmode in ['freeze', 'standby']):
+					data.tSuspended = prevktime
+					if lp:
+						data.setPhase(lp, prevktime, False)
+				else:
+					data.tSuspended = ktime
+					if lp:
+						data.setPhase(lp, prevktime, False)
+				data.tResumed = ktime
+				data.tLow = data.tResumed - data.tSuspended
+				data.setPhase(phase, ktime, True)
+			elif phase == 'resume_noirq':
+				lp = data.lastPhase()
+				if lp:
+					data.setPhase(lp, ktime, False)
+				data.setPhase(phase, ktime, True)
+			elif phase == 'resume_early':
+				lp = data.lastPhase()
+				if lp:
+					data.setPhase(lp, ktime, False)
+				data.setPhase(phase, ktime, True)
+			elif phase == 'resume':
+				lp = data.lastPhase()
+				if lp:
+					data.setPhase(lp, ktime, False)
+				data.setPhase(phase, ktime, True)
+			elif phase == 'resume_complete':
+				lp = data.lastPhase()
+				if lp:
+					data.setPhase(lp, ktime, False)
+				data.setPhase(phase, ktime, True)
+			elif phase == 'post_resume':
+				lp = data.lastPhase()
+				if lp:
+					data.setPhase(lp, ktime, False)
+				data.setEnd(ktime)
+				data.tKernRes = ktime
+				break
 
 		# -- device callbacks --
 		if(phase in data.sortedPhases()):
