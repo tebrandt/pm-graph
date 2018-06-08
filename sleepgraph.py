@@ -3339,64 +3339,86 @@ def parseKernelLog(data):
 		# suspend start
 		if(re.match(dm['suspend_prepare'], msg)):
 			phase = 'suspend_prepare'
-			data.dmesg[phase]['start'] = ktime
+			data.setPhase(phase, ktime, True)
 			data.setStart(ktime)
 			data.tKernSus = ktime
 		# suspend start
 		elif(re.match(dm['suspend'], msg)):
-			data.dmesg['suspend_prepare']['end'] = ktime
 			phase = 'suspend'
-			data.dmesg[phase]['start'] = ktime
+			print msg
+			lp = data.lastPhase()
+			if lp:
+				data.setPhase(lp, ktime, False)
+			data.setPhase(phase, ktime, True)
 		# suspend_late start
 		elif(re.match(dm['suspend_late'], msg)):
-			data.dmesg['suspend']['end'] = ktime
 			phase = 'suspend_late'
-			data.dmesg[phase]['start'] = ktime
+			lp = data.lastPhase()
+			if lp:
+				data.setPhase(lp, ktime, False)
+			data.setPhase(phase, ktime, True)
 		# suspend_noirq start
 		elif(re.match(dm['suspend_noirq'], msg)):
-			data.dmesg['suspend_late']['end'] = ktime
 			phase = 'suspend_noirq'
-			data.dmesg[phase]['start'] = ktime
+			lp = data.lastPhase()
+			if lp:
+				data.setPhase(lp, ktime, False)
+			data.setPhase(phase, ktime, True)
 		# suspend_machine start
 		elif(re.match(dm['suspend_machine'], msg)):
-			data.dmesg['suspend_noirq']['end'] = ktime
 			phase = 'suspend_machine'
-			data.dmesg[phase]['start'] = ktime
+			lp = data.lastPhase()
+			if lp:
+				data.setPhase(lp, ktime, False)
+			data.setPhase(phase, ktime, True)
 		# resume_machine start
 		elif(re.match(dm['resume_machine'], msg)):
+			lp = data.lastPhase()
 			if(sysvals.suspendmode in ['freeze', 'standby']):
 				data.tSuspended = prevktime
-				data.dmesg['suspend_machine']['end'] = prevktime
+				if lp:
+					data.setPhase(lp, prevktime, False)
 			else:
 				data.tSuspended = ktime
-				data.dmesg['suspend_machine']['end'] = ktime
+				if lp:
+					data.setPhase(lp, prevktime, False)
 			phase = 'resume_machine'
 			data.tResumed = ktime
 			data.tLow = data.tResumed - data.tSuspended
-			data.dmesg[phase]['start'] = ktime
+			data.setPhase(phase, ktime, True)
 		# resume_noirq start
 		elif(re.match(dm['resume_noirq'], msg)):
-			data.dmesg['resume_machine']['end'] = ktime
 			phase = 'resume_noirq'
-			data.dmesg[phase]['start'] = ktime
+			lp = data.lastPhase()
+			if lp:
+				data.setPhase(lp, ktime, False)
+			data.setPhase(phase, ktime, True)
 		# resume_early start
 		elif(re.match(dm['resume_early'], msg)):
-			data.dmesg['resume_noirq']['end'] = ktime
 			phase = 'resume_early'
-			data.dmesg[phase]['start'] = ktime
+			lp = data.lastPhase()
+			if lp:
+				data.setPhase(lp, ktime, False)
+			data.setPhase(phase, ktime, True)
 		# resume start
 		elif(re.match(dm['resume'], msg)):
-			data.dmesg['resume_early']['end'] = ktime
 			phase = 'resume'
-			data.dmesg[phase]['start'] = ktime
+			lp = data.lastPhase()
+			if lp:
+				data.setPhase(lp, ktime, False)
+			data.setPhase(phase, ktime, True)
 		# resume complete start
 		elif(re.match(dm['resume_complete'], msg)):
-			data.dmesg['resume']['end'] = ktime
 			phase = 'resume_complete'
-			data.dmesg[phase]['start'] = ktime
+			lp = data.lastPhase()
+			if lp:
+				data.setPhase(lp, ktime, False)
+			data.setPhase(phase, ktime, True)
 		# post resume start
 		elif(re.match(dm['post_resume'], msg)):
-			data.dmesg['resume_complete']['end'] = ktime
+			lp = data.lastPhase()
+			if lp:
+				data.setPhase(lp, ktime, False)
 			data.setEnd(ktime)
 			data.tKernRes = ktime
 			break
@@ -3460,24 +3482,31 @@ def parseKernelLog(data):
 				actions[cpu].append({'begin': cpu_start, 'end': ktime})
 				cpu_start = ktime
 		prevktime = ktime
+	data.initDevicegroups()
 
 	# fill in any missing phases
+	phasedef = data.phasedef
+	terr, lp = '', 'suspend_prepare'
+	for p in sorted(phasedef, key=lambda k:phasedef[k]['order']):
+		if p not in data.dmesg:
+			if not terr:
+				print 'TEST FAILED: %s failed in %s phase' % (sysvals.suspendmode, lp)
+				terr = '%s failed in %s phase' % (sysvals.suspendmode, lp)
+				if data.tSuspended == 0:
+					data.tSuspended = data.dmesg[lp]['end']
+				if data.tResumed == 0:
+					data.tResumed = data.dmesg[lp]['end']
+			sysvals.vprint('WARNING: phase "%s" is missing!' % p)
+		lp = p
 	lp = data.sortedPhases()[0]
 	for p in data.sortedPhases():
-		if(data.dmesg[p]['start'] < 0 and data.dmesg[p]['end'] < 0):
-			print('WARNING: phase "%s" is missing, something went wrong!' % p)
-			print('    In %s, this dmesg line denotes the start of %s:' % \
-				(sysvals.suspendmode, p))
-			print('        "%s"' % dm[p])
-		if(data.dmesg[p]['start'] < 0):
-			data.dmesg[p]['start'] = data.dmesg[lp]['end']
-			if(p == 'resume_machine'):
-				data.tSuspended = data.dmesg[lp]['end']
-				data.tResumed = data.dmesg[lp]['end']
-				data.tLow = 0
-		if(data.dmesg[p]['end'] < 0):
-			data.dmesg[p]['end'] = data.dmesg[p]['start']
+		if(p != lp and not ('machine' in p and 'machine' in lp)):
+			data.dmesg[lp]['end'] = data.dmesg[p]['start']
 		lp = p
+	if data.tSuspended == 0:
+		data.tSuspended = data.tKernRes
+	if data.tResumed == 0:
+		data.tResumed = data.tSuspended
 
 	# fill in any actions we've found
 	for name in actions:
