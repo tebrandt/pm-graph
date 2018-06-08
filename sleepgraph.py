@@ -2406,7 +2406,7 @@ class ProcessMonitor:
 #	 markers, and/or kprobes required for primary parsing.
 def doesTraceLogHaveTraceEvents():
 	kpcheck = ['_cal: (', '_cpu_down()']
-	techeck = ['suspend_resume']
+	techeck = ['suspend_resume', 'device_pm_callback']
 	tmcheck = ['SUSPEND START', 'RESUME COMPLETE']
 	sysvals.usekprobes = False
 	fp = sysvals.openlog(sysvals.ftracefile, 'r')
@@ -2441,11 +2441,8 @@ def doesTraceLogHaveTraceEvents():
 # Function: appendIncompleteTraceLog
 # Description:
 #	 [deprecated for kernel 3.15 or newer]
-#	 Legacy support of ftrace outputs that lack the device_pm_callback
-#	 and/or suspend_resume trace events. The primary data should be
-#	 taken from dmesg, and this ftrace is used only for callgraph data
-#	 or custom actions in the timeline. The data is appended to the Data
-#	 objects provided.
+#	 Adds callgraph data which lacks trace event data. This is only
+#	 for timelines generated from 3.15 or older
 # Arguments:
 #	 testruns: the array of Data objects obtained from parseKernelLog
 def appendIncompleteTraceLog(testruns):
@@ -2524,87 +2521,7 @@ def appendIncompleteTraceLog(testruns):
 			continue
 		# trace event processing
 		if(t.fevent):
-			# general trace events have two types, begin and end
-			if(re.match('(?P<name>.*) begin$', t.name)):
-				isbegin = True
-			elif(re.match('(?P<name>.*) end$', t.name)):
-				isbegin = False
-			else:
-				continue
-			m = re.match('(?P<name>.*)\[(?P<val>[0-9]*)\] .*', t.name)
-			if(m):
-				val = m.group('val')
-				if val == '0':
-					name = m.group('name')
-				else:
-					name = m.group('name')+'['+val+']'
-			else:
-				m = re.match('(?P<name>.*) .*', t.name)
-				name = m.group('name')
-			# special processing for trace events
-			if re.match('dpm_prepare\[.*', name):
-				continue
-			elif re.match('machine_suspend.*', name):
-				continue
-			elif re.match('suspend_enter\[.*', name):
-				if(not isbegin):
-					data.dmesg['suspend_prepare']['end'] = t.time
-				continue
-			elif re.match('dpm_suspend\[.*', name):
-				if(not isbegin):
-					data.dmesg['suspend']['end'] = t.time
-				continue
-			elif re.match('dpm_suspend_late\[.*', name):
-				if(isbegin):
-					data.dmesg['suspend_late']['start'] = t.time
-				else:
-					data.dmesg['suspend_late']['end'] = t.time
-				continue
-			elif re.match('dpm_suspend_noirq\[.*', name):
-				if(isbegin):
-					data.dmesg['suspend_noirq']['start'] = t.time
-				else:
-					data.dmesg['suspend_noirq']['end'] = t.time
-				continue
-			elif re.match('dpm_resume_noirq\[.*', name):
-				if(isbegin):
-					data.dmesg['resume_machine']['end'] = t.time
-					data.dmesg['resume_noirq']['start'] = t.time
-				else:
-					data.dmesg['resume_noirq']['end'] = t.time
-				continue
-			elif re.match('dpm_resume_early\[.*', name):
-				if(isbegin):
-					data.dmesg['resume_early']['start'] = t.time
-				else:
-					data.dmesg['resume_early']['end'] = t.time
-				continue
-			elif re.match('dpm_resume\[.*', name):
-				if(isbegin):
-					data.dmesg['resume']['start'] = t.time
-				else:
-					data.dmesg['resume']['end'] = t.time
-				continue
-			elif re.match('dpm_complete\[.*', name):
-				if(isbegin):
-					data.dmesg['resume_complete']['start'] = t.time
-				else:
-					data.dmesg['resume_complete']['end'] = t.time
-				continue
-			# skip trace events inside devices calls
-			if(not data.isTraceEventOutsideDeviceCalls(pid, t.time)):
-				continue
-			# global events (outside device calls) are simply graphed
-			if(isbegin):
-				# store each trace event in ttemp
-				if(name not in testrun[testidx].ttemp):
-					testrun[testidx].ttemp[name] = []
-				testrun[testidx].ttemp[name].append(\
-					{'begin': t.time, 'end': t.time})
-			else:
-				# finish off matching trace event in ttemp
-				if(name in testrun[testidx].ttemp):
-					testrun[testidx].ttemp[name][-1]['end'] = t.time
+			continue
 		# call/return processing
 		elif sysvals.usecallgraph:
 			# create a callgraph object for the data
@@ -2621,12 +2538,6 @@ def appendIncompleteTraceLog(testruns):
 	tf.close()
 
 	for test in testrun:
-		# add the traceevent data to the device hierarchy
-		if(sysvals.usetraceevents):
-			for name in test.ttemp:
-				for event in test.ttemp[name]:
-					test.data.newActionGlobal(name, event['begin'], event['end'])
-
 		# add the callgraph data to the device hierarchy
 		for pid in test.ftemp:
 			for cg in test.ftemp[pid]:
