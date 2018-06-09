@@ -1194,7 +1194,7 @@ class Data:
 			if self.currphase:
 				if self.currphase != 'resume_machine':
 					print 'WARNING: phase %s failed to end' % self.currphase
-				self.dmesg[self.currphase]['start'] = ktime
+				self.dmesg[self.currphase]['end'] = ktime
 			phases = self.dmesg.keys()
 			color = self.phasedef[phase]['color']
 			count = len(phases) if order < 0 else order
