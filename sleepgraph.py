@@ -61,8 +61,6 @@ import gzip
 from threading import Thread
 from subprocess import call, Popen, PIPE
 
-TODDFIX = False
-
 # ----------------- CLASSES --------------------
 
 # Class: SystemValues
@@ -2903,22 +2901,6 @@ def parseTraceLog(live=False):
 				testrun.ftemp[key][-1].addLine(t)
 	tf.close()
 
-	# REMOVE ME ---------
-	if TODDFIX:
-		for data in testdata:
-			phasedef = data.phasedef
-			for phase in sorted(phasedef, key=lambda k:phasedef[k]['order']):
-				if phase == 'suspend_prepare':
-					continue
-				if phase not in data.dmesg:
-					data.setPhase(phase, -1, True, phasedef[phase]['order'])
-					if phase == 'resume_complete':
-						data.dmesg['resume_complete']['end'] = data.end
-				else:
-					data.dmesg[phase]['order'] = phasedef[phase]['order']
-			data.initDevicegroups()
-	# REMOVE ME ---------
-
 	if sysvals.suspendmode == 'command':
 		for test in testruns:
 			for p in test.data.sortedPhases():
@@ -3014,52 +2996,29 @@ def parseTraceLog(live=False):
 	for data in testdata:
 		tn = '' if len(testdata) == 1 else ('%d' % (data.testnumber + 1))
 		terr = ''
-		# REMOVE ME ---------
-		if TODDFIX:
-			lp = data.sortedPhases()[0]
-			for p in data.sortedPhases():
-				if(data.dmesg[p]['start'] < 0 and data.dmesg[p]['end'] < 0):
-					if not terr:
-						print 'TEST%s FAILED: %s failed in %s phase' % (tn, sysvals.suspendmode, lp)
-						terr = '%s%s failed in %s phase' % (sysvals.suspendmode, tn, lp)
-						error.append(terr)
-					sysvals.vprint('WARNING: phase "%s" is missing!' % p)
-				if(data.dmesg[p]['start'] < 0):
-					data.dmesg[p]['start'] = data.dmesg[lp]['end']
-					if(p == 'resume_machine'):
+		phasedef = data.phasedef
+		lp = 'suspend_prepare'
+		for p in sorted(phasedef, key=lambda k:phasedef[k]['order']):
+			if p not in data.dmesg:
+				if not terr:
+					print 'TEST%s FAILED: %s failed in %s phase' % (tn, sysvals.suspendmode, lp)
+					terr = '%s%s failed in %s phase' % (sysvals.suspendmode, tn, lp)
+					error.append(terr)
+					if data.tSuspended == 0:
 						data.tSuspended = data.dmesg[lp]['end']
+					if data.tResumed == 0:
 						data.tResumed = data.dmesg[lp]['end']
-						data.tLow = 0
-				if(data.dmesg[p]['end'] < 0):
-					data.dmesg[p]['end'] = data.dmesg[p]['start']
-				if(p != lp and not ('machine' in p and 'machine' in lp)):
-					data.dmesg[lp]['end'] = data.dmesg[p]['start']
-				lp = p
-		else:
-		# REMOVE ME ---------
-			phasedef = data.phasedef
-			lp = 'suspend_prepare'
-			for p in sorted(phasedef, key=lambda k:phasedef[k]['order']):
-				if p not in data.dmesg:
-					if not terr:
-						print 'TEST%s FAILED: %s failed in %s phase' % (tn, sysvals.suspendmode, lp)
-						terr = '%s%s failed in %s phase' % (sysvals.suspendmode, tn, lp)
-						error.append(terr)
-						if data.tSuspended == 0:
-							data.tSuspended = data.dmesg[lp]['end']
-						if data.tResumed == 0:
-							data.tResumed = data.dmesg[lp]['end']
-					sysvals.vprint('WARNING: phase "%s" is missing!' % p)
-				lp = p
-			lp = data.sortedPhases()[0]
-			for p in data.sortedPhases():
-				if(p != lp and not ('machine' in p and 'machine' in lp)):
-					data.dmesg[lp]['end'] = data.dmesg[p]['start']
-				lp = p
-			if data.tSuspended == 0:
-				data.tSuspended = data.tKernRes
-			if data.tResumed == 0:
-				data.tResumed = data.tSuspended
+				sysvals.vprint('WARNING: phase "%s" is missing!' % p)
+			lp = p
+		lp = data.sortedPhases()[0]
+		for p in data.sortedPhases():
+			if(p != lp and not ('machine' in p and 'machine' in lp)):
+				data.dmesg[lp]['end'] = data.dmesg[p]['start']
+			lp = p
+		if data.tSuspended == 0:
+			data.tSuspended = data.tKernRes
+		if data.tResumed == 0:
+			data.tResumed = data.tSuspended
 
 		if(len(sysvals.devicefilter) > 0):
 			data.deviceFilter(sysvals.devicefilter)
