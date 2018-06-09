@@ -896,6 +896,7 @@ class Data:
 		         'resume': {'order': 8, 'color': '#FFFF88'},
 		'resume_complete': {'order': 9, 'color': '#FFFFCC'},
 	}
+	currphase = ''
 	def __init__(self, num):
 		idchar = 'abcdefghij'
 		self.pstl = dict()
@@ -1189,13 +1190,33 @@ class Data:
 		return (sktime, rktime)
 	def setPhase(self, phase, ktime, isbegin, order=-1):
 		if(isbegin):
-			count = len(self.dmesg.keys()) if order < 0 else order
+			# phase start over current phase
+			if self.currphase:
+				if self.currphase != 'resume_machine':
+					print 'WARNING: phase %s failed to end' % self.currphase
+				self.dmesg[self.currphase]['start'] = ktime
+			phases = self.dmesg.keys()
+			color = self.phasedef[phase]['color']
+			count = len(phases) if order < 0 else order
+			# create unique name for every new phase
+			while phase in phases:
+				phase += '*'
 			self.dmesg[phase] = {'list': dict(), 'start': -1.0, 'end': -1.0,
-				'row': 0, 'color': self.phasedef[phase]['color'],
-				'order': count}
+				'row': 0, 'color': color, 'order': count}
 			self.dmesg[phase]['start'] = ktime
+			self.currphase = phase
 		else:
+			# phase end without a start
+			if phase not in self.currphase:
+				if self.currphase:
+					print 'WARNING: %s ended instead of %s, ftrace corruption?' % (phase, self.currphase)
+				else:
+					print 'WARNING: %s ended without a start, ftrace corruption?' % phase
+					return phase
+			phase = self.currphase
 			self.dmesg[phase]['end'] = ktime
+			self.currphase = ''
+		return phase
 	def sortedDevices(self, phase):
 		list = self.dmesg[phase]['list']
 		slist = []
@@ -2653,8 +2674,7 @@ def parseTraceLog(live=False):
 			testruns.append(testrun)
 			tp.parseStamp(data, sysvals)
 			data.setStart(t.time)
-			phase = 'suspend_prepare'
-			data.setPhase(phase, t.time, True)
+			phase = data.setPhase('suspend_prepare', t.time, True)
 			continue
 		if(not data):
 			continue
@@ -2746,55 +2766,47 @@ def parseTraceLog(live=False):
 					continue
 				# suspend start
 				elif(re.match('dpm_suspend\[.*', t.name)):
-					phase = 'suspend'
-					data.setPhase(phase, t.time, isbegin)
+					phase = data.setPhase('suspend', t.time, isbegin)
 					continue
 				# suspend_late start
 				elif(re.match('dpm_suspend_late\[.*', t.name)):
-					phase = 'suspend_late'
-					data.setPhase(phase, t.time, isbegin)
+					phase = data.setPhase('suspend_late', t.time, isbegin)
 					continue
 				# suspend_noirq start
 				elif(re.match('dpm_suspend_noirq\[.*', t.name)):
-					phase = 'suspend_noirq'
-					data.setPhase(phase, t.time, isbegin)
+					phase = data.setPhase('suspend_noirq', t.time, isbegin)
 					continue
 				# suspend_machine/resume_machine
 				elif(re.match('machine_suspend\[.*', t.name)):
 					if(isbegin):
-						phase = 'suspend_machine'
 						lp = data.lastPhase()
-						data.setPhase(phase, data.dmesg[lp]['end'], True)
-						data.dmesg[phase]['end'] = t.time
+						phase = data.setPhase('suspend_machine', data.dmesg[lp]['end'], True)
+						data.setPhase(phase, t.time, False)
 						data.tSuspended = t.time
 					else:
-						phase = 'resume_machine'
-						data.setPhase(phase, t.time, True)
+						phase = data.setPhase('resume_machine', t.time, True)
 						if(sysvals.suspendmode in ['mem', 'disk']):
-							data.dmesg['suspend_machine']['end'] = t.time
+							if 'suspend_machine' in data.dmesg:
+								data.dmesg['suspend_machine']['end'] = t.time
 							data.tSuspended = t.time
 						data.tResumed = t.time
 						data.tLow = data.tResumed - data.tSuspended
 					continue
 				# resume_noirq start
 				elif(re.match('dpm_resume_noirq\[.*', t.name)):
-					phase = 'resume_noirq'
-					data.setPhase(phase, t.time, isbegin)
+					phase = data.setPhase('resume_noirq', t.time, isbegin)
 					continue
 				# resume_early start
 				elif(re.match('dpm_resume_early\[.*', t.name)):
-					phase = 'resume_early'
-					data.setPhase(phase, t.time, isbegin)
+					phase = data.setPhase('resume_early', t.time, isbegin)
 					continue
 				# resume start
 				elif(re.match('dpm_resume\[.*', t.name)):
-					phase = 'resume'
-					data.setPhase(phase, t.time, isbegin)
+					phase = data.setPhase('resume', t.time, isbegin)
 					continue
 				# resume complete start
 				elif(re.match('dpm_complete\[.*', t.name)):
-					phase = 'resume_complete'
-					data.setPhase(phase, t.time, isbegin)
+					phase = data.setPhase('resume_complete', t.time, isbegin)
 					continue
 				# skip trace events inside devices calls
 				if(not data.isTraceEventOutsideDeviceCalls(pid, t.time)):
