@@ -5856,6 +5856,7 @@ def data_from_html(file, outpath, issues):
 	# extract general info
 	suspend = find_in_html(html, 'Kernel Suspend', 'ms')
 	resume = find_in_html(html, 'Kernel Resume', 'ms')
+	sysinfo = find_in_html(html, '<div class="stamp sysinfo">', '</div>')
 	line = find_in_html(html, '<div class="stamp">', '</div>')
 	stmp = line.split()
 	if not suspend or not resume or len(stmp) != 8:
@@ -5945,6 +5946,7 @@ def data_from_html(file, outpath, issues):
 		'mode': stmp[2],
 		'host': stmp[0],
 		'kernel': stmp[1],
+		'sysinfo': sysinfo,
 		'time': tstr,
 		'result': result,
 		'issues': ' '.join(ilist),
