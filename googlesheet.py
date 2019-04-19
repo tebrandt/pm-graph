@@ -13,8 +13,6 @@ import sys
 import warnings
 import re
 from datetime import datetime
-import ConfigParser
-import StringIO
 import argparse
 import smtplib
 import sleepgraph as sg
@@ -1240,44 +1238,6 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, urlprefix):
 	print('spreadsheet id: %s' % id)
 	return True
 
-def bugzilla_check(buglist, desc, testruns, issues):
-	for id in buglist:
-		# check each bug to see if it is applicable and exists
-		applicable = True
-		# parse the config file which describes the issue
-		config = ConfigParser.ConfigParser()
-		config.readfp(StringIO.StringIO(buglist[id]['def']))
-		sections = config.sections()
-		req = idesc = ''
-		for key in sections:
-			if key.lower() == 'requirements':
-				req = key
-			elif key.lower() == 'description':
-				idesc = key
-		# verify that this system & multitest meets the requirements
-		if req:
-			for key in config.options(req):
-				val = config.get(req, key)
-				if key.lower() == 'mode':
-					applicable = (desc['mode'] in val)
-				else:
-					applicable = (val.lower() in desc['sysinfo'].lower())
-		if not applicable or not idesc:
-			continue
-		# check for the existence of the issue in the data
-		buglist[id]['found'] = ''
-		for key in config.options(idesc):
-			if buglist[id]['found']:
-				break
-			val = config.get(idesc, key)
-			if key.lower().startswith('dmesgregex'):
-				for issue in issues:
-					if re.match(val, issue['line']):
-						urls, host = issue['urls'], desc['host']
-						url = urls[host] if host in urls else ''
-						buglist[id]['found'] = url
-						break
-
 def pm_graph_report(indir, outpath, urlprefix, buglist):
 	desc = {'host':'', 'mode':'', 'kernel':'', 'sysinfo':''}
 	useturbo = False
@@ -1390,18 +1350,16 @@ def pm_graph_report(indir, outpath, urlprefix, buglist):
 	out = outpath.format(**desc)
 
 	# check the status of open bugs against this multitest
+	mybugs = []
 	if len(buglist) > 0:
-		bugzilla_check(buglist, desc, testruns, issues)
-		for id in buglist:
-			if 'found' in buglist[id]:
-				print('%s: %s' % (id, buglist[id]['found']))
+		mybugs = bz.bugzilla_check(buglist, desc, testruns, issues)
 
 	# create the summary html files
 	title = '%s %s %s' % (desc['host'], desc['kernel'], desc['mode'])
 	sg.createHTMLSummarySimple(testruns,
 		os.path.join(indir, 'summary.html'), title)
 	sg.createHTMLIssuesSummary(issues,
-		os.path.join(indir, 'summary-issues.html'), title)
+		os.path.join(indir, 'summary-issues.html'), title, mybugs)
 	devall = sg.createHTMLDeviceSummary(testruns,
 		os.path.join(indir, 'summary-devices.html'), title)
 

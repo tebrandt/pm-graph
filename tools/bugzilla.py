@@ -2,9 +2,12 @@
 
 import sys
 import base64
+import re
 import json
 import requests
 import urllib
+import ConfigParser
+import StringIO
 
 def webrequest(url):
 	try:
@@ -47,6 +50,52 @@ def getissues(urlprefix, depissue):
 				'url': showurl.format(id),
 				'desc': bug['summary']
 			}
+	return out
+
+def bugzilla_check(buglist, desc, testruns, issues):
+	out = []
+	for id in buglist:
+		# check each bug to see if it is applicable and exists
+		applicable = True
+		# parse the config file which describes the issue
+		config = ConfigParser.ConfigParser()
+		config.readfp(StringIO.StringIO(buglist[id]['def']))
+		sections = config.sections()
+		req = idesc = ''
+		for key in sections:
+			if key.lower() == 'requirements':
+				req = key
+			elif key.lower() == 'description':
+				idesc = key
+		# verify that this system & multitest meets the requirements
+		if req:
+			for key in config.options(req):
+				val = config.get(req, key)
+				if key.lower() == 'mode':
+					applicable = (desc['mode'] in val)
+				else:
+					applicable = (val.lower() in desc['sysinfo'].lower())
+		if not applicable or not idesc:
+			continue
+		# check for the existence of the issue in the data
+		bugdata = {
+			'id': id,
+			'desc': buglist[id]['desc'],
+			'bugurl': buglist[id]['url'],
+			'found': '',
+		}
+		for key in config.options(idesc):
+			if bugdata['found']:
+				break
+			val = config.get(idesc, key)
+			if key.lower().startswith('dmesgregex'):
+				for issue in issues:
+					if re.match(val, issue['line']):
+						urls, host = issue['urls'], desc['host']
+						url = urls[host] if host in urls else ''
+						bugdata['found'] = url
+						break
+		out.append(bugdata)
 	return out
 
 def pm_stress_test_issues():
