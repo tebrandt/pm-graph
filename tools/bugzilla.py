@@ -75,6 +75,8 @@ def bugzilla_check(buglist, desc, testruns, issues):
 					applicable = (desc['mode'] in val)
 				else:
 					applicable = (val.lower() in desc['sysinfo'].lower())
+				if not applicable:
+					break
 		if not applicable or not idesc:
 			continue
 		# check for the existence of the issue in the data
