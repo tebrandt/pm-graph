@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 #
 # Google Sheet Creator
 #
@@ -12,11 +12,13 @@ import os
 import sys
 import warnings
 import re
-import time
-from datetime import date, datetime, timedelta
+from datetime import datetime
+import ConfigParser
+import StringIO
 import argparse
 import smtplib
 import sleepgraph as sg
+import tools.bugzilla as bz
 try:
 	import httplib2
 except:
@@ -1238,8 +1240,46 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, urlprefix):
 	print('spreadsheet id: %s' % id)
 	return True
 
-def pm_graph_report(indir, outpath, urlprefix):
-	desc = {'host':'', 'mode':'', 'kernel':''}
+def bugzilla_check(buglist, desc, testruns, issues):
+	for id in buglist:
+		# check each bug to see if it is applicable and exists
+		applicable = True
+		# parse the config file which describes the issue
+		config = ConfigParser.ConfigParser()
+		config.readfp(StringIO.StringIO(buglist[id]['def']))
+		sections = config.sections()
+		req = idesc = ''
+		for key in sections:
+			if key.lower() == 'requirements':
+				req = key
+			elif key.lower() == 'description':
+				idesc = key
+		# verify that this system & multitest meets the requirements
+		if req:
+			for key in config.options(req):
+				val = config.get(req, key)
+				if key.lower() == 'mode':
+					applicable = (desc['mode'] in val)
+				else:
+					applicable = (val.lower() in desc['sysinfo'].lower())
+		if not applicable or not idesc:
+			continue
+		# check for the existence of the issue in the data
+		buglist[id]['found'] = ''
+		for key in config.options(idesc):
+			if buglist[id]['found']:
+				break
+			val = config.get(idesc, key)
+			if key.lower().startswith('dmesgregex'):
+				for issue in issues:
+					if re.match(val, issue['line']):
+						urls, host = issue['urls'], desc['host']
+						url = urls[host] if host in urls else ''
+						buglist[id]['found'] = url
+						break
+
+def pm_graph_report(indir, outpath, urlprefix, buglist):
+	desc = {'host':'', 'mode':'', 'kernel':'', 'sysinfo':''}
 	useturbo = False
 	issues = []
 	testruns = []
@@ -1349,6 +1389,13 @@ def pm_graph_report(indir, outpath, urlprefix):
 	desc['time'] = begin.strftime('%H%M%S')
 	out = outpath.format(**desc)
 
+	# check the status of open bugs against this multitest
+	if len(buglist) > 0:
+		bugzilla_check(buglist, desc, testruns, issues)
+		for id in buglist:
+			if 'found' in buglist[id]:
+				print('%s: %s' % (id, buglist[id]['found']))
+
 	# create the summary html files
 	title = '%s %s %s' % (desc['host'], desc['kernel'], desc['mode'])
 	sg.createHTMLSummarySimple(testruns,
@@ -1455,6 +1502,7 @@ if __name__ == '__main__':
 		choices=['test', 'summary', 'both'], default='test')
 	parser.add_argument('-mail', nargs=4, metavar=('server', 'sender', 'receiver', 'subject'))
 	parser.add_argument('-genhtml', action='store_true')
+	parser.add_argument('-bugzilla', action='store_true')
 	parser.add_argument('-urlprefix', metavar='url', default='')
 	parser.add_argument('folder')
 	args = parser.parse_args()
@@ -1467,6 +1515,11 @@ if __name__ == '__main__':
 
 	if args.mail and args.stype == 'sheet':
 		doError('-mail is not compatible with stype=sheet, choose stype=text/html', False)
+
+	buglist = dict()
+	if args.bugzilla:
+		print('Loading open bugzilla issues...')
+		buglist = bz.pm_stress_test_issues()
 
 	multitests = []
 	# search for stress test output folders with at least one test
@@ -1486,7 +1539,7 @@ if __name__ == '__main__':
 			indir, urlprefix = testinfo
 			if args.genhtml:
 				sg.genHtml(indir)
-			pm_graph_report(indir, args.tpath, urlprefix)
+			pm_graph_report(indir, args.tpath, urlprefix, buglist)
 	if args.create == 'test':
 		sys.exit(0)
 
