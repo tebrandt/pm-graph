@@ -127,7 +127,6 @@ def infoIssues(folder, file, basename):
 		return issues
 	for issue in tables[0].split('<tr'):
 		if '<td' not in issue or '</td>' not in issue:
-			print issue
 			continue
 		values = sg.find_in_html(issue, '<td[a-z= ]*>', '</td>', False)
 		if len(values) < 4:
