@@ -122,8 +122,12 @@ def infoIssues(folder, file, basename):
 
 	issues = []
 	html = open(file, 'r').read()
-	for issue in html.split('<tr'):
-		if '<th>' in issue or 'class="head"' in issue or '<html>' in issue:
+	tables = sg.find_in_html(html, '<table>', '</table>', False)
+	if len(tables) < 1:
+		return issues
+	for issue in tables[0].split('<tr'):
+		if '<td' not in issue or '</td>' not in issue:
+			print issue
 			continue
 		values = sg.find_in_html(issue, '<td[a-z= ]*>', '</td>', False)
 		if len(values) < 4:
@@ -1350,16 +1354,17 @@ def pm_graph_report(indir, outpath, urlprefix, buglist):
 	out = outpath.format(**desc)
 
 	# check the status of open bugs against this multitest
-	mybugs = []
+	bughtml = ''
 	if len(buglist) > 0:
 		mybugs = bz.bugzilla_check(buglist, desc, testruns, issues)
+		bughtml = bz.html_table(mybugs, desc)
 
 	# create the summary html files
 	title = '%s %s %s' % (desc['host'], desc['kernel'], desc['mode'])
 	sg.createHTMLSummarySimple(testruns,
 		os.path.join(indir, 'summary.html'), title)
 	sg.createHTMLIssuesSummary(issues,
-		os.path.join(indir, 'summary-issues.html'), title, mybugs)
+		os.path.join(indir, 'summary-issues.html'), title, bughtml)
 	devall = sg.createHTMLDeviceSummary(testruns,
 		os.path.join(indir, 'summary-devices.html'), title)
 

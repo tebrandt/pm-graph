@@ -3976,7 +3976,7 @@ def createHTMLDeviceSummary(testruns, htmlfile, title):
 	hf.close()
 	return devall
 
-def createHTMLIssuesSummary(issues, htmlfile, title, bugs=False):
+def createHTMLIssuesSummary(issues, htmlfile, title, extra=''):
 	html = summaryCSS('Issues Summary - SleepGraph', False)
 
 	# generate the html
@@ -4003,15 +4003,9 @@ def createHTMLIssuesSummary(issues, htmlfile, title, bugs=False):
 		html += '</tr>\n'
 		num += 1
 
-	# process any bug data supplied
-	if bugs:
-		for bug in bugs:
-			for key in bug:
-				print('%-8s: %s' % (key.upper(), bug[key]))
-
 	# flush the data to file
 	hf = open(htmlfile, 'w')
-	hf.write(html+'</table>\n</body>\n</html>\n')
+	hf.write(html+'</table>\n'+extra+'</body>\n</html>\n')
 	hf.close()
 	return issues
 
