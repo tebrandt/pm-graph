@@ -52,6 +52,74 @@ def getissues(urlprefix, depissue):
 			}
 	return out
 
+def countFormat(count, total):
+	p = 100*float(count)/float(total)
+	return '%d / %d (%.2f%%)' % (count, total, p)
+
+def check_issue(host, val, issues, testruns, bugdata):
+	for issue in issues:
+		if re.match(val, issue['line']):
+			urls = issue['urls']
+			url = urls[host] if host in urls else ''
+			bugdata['found'] = url
+			bugdata['count'] = countFormat(issue['count'], len(testruns))
+			break
+
+def check_device_time(phase, mstr, testruns, bugdata):
+	greater = True
+	if '>' in mstr:
+		tmp = mstr.split('>')
+	elif '<' in mstr:
+		greater = False
+		tmp = mstr.split('<')
+	else:
+		return
+	devstr = tmp[0].strip()
+	try:
+		target = float(tmp[-1].strip())
+	except:
+		return
+	if not devstr:
+		return
+	match = dict()
+	for data in testruns:
+		if phase not in data['devlist']:
+			break
+		for dev in data['devlist'][phase]:
+			name = dev.split(' {')[0] if '{' in dev else dev
+			if '[' in name:
+				name = name.split(' [')[-1].replace(']', '')
+			if not re.match(devstr, name):
+				continue
+			if name not in match:
+				match[name] = {'count':0,'worst':0,'url':''}
+			val = data['devlist'][phase][dev]
+			if greater and val > target:
+				if val > match[name]['worst']:
+					match[name]['worst'] = val
+					match[name]['url'] = data['url']
+				match[name]['count'] += 1
+			elif not greater and val < target:
+				if val < match[name]['worst']:
+					match[name]['worst'] = val
+					match[name]['url'] = data['url']
+				match[name]['count'] += 1
+	for i in sorted(match, key=lambda k:match[k]['count'], reverse=True):
+		bugdata['found'] = match[i]['url']
+		bugdata['count'] = countFormat(match[i]['count'], len(testruns))
+		break
+
+def find_device(mstr, testruns):
+	for data in testruns[:5]:
+		if 'suspend' not in data['devlist']:
+			break
+		for dev in data['devlist']['suspend']:
+			name = dev.split(' {')[0] if '{' in dev else dev
+			name = name.split(' [')[-1].replace(']', '') if '[' in name else name
+			if re.match(mstr, name):
+				return True
+	return False
+
 def bugzilla_check(buglist, desc, testruns, issues):
 	out = []
 	for id in buglist:
@@ -73,6 +141,8 @@ def bugzilla_check(buglist, desc, testruns, issues):
 				val = config.get(req, key)
 				if key.lower() == 'mode':
 					applicable = (desc['mode'] in val)
+				elif key.lower() == 'device':
+					applicable = find_device(val, testruns)
 				else:
 					applicable = (val.lower() in desc['sysinfo'].lower())
 				if not applicable:
@@ -84,6 +154,7 @@ def bugzilla_check(buglist, desc, testruns, issues):
 			'id': id,
 			'desc': buglist[id]['desc'],
 			'bugurl': buglist[id]['url'],
+			'count': countFormat(0, len(testruns)),
 			'found': '',
 		}
 		for key in config.options(idesc):
@@ -91,12 +162,9 @@ def bugzilla_check(buglist, desc, testruns, issues):
 				break
 			val = config.get(idesc, key)
 			if key.lower().startswith('dmesgregex'):
-				for issue in issues:
-					if re.match(val, issue['line']):
-						urls, host = issue['urls'], desc['host']
-						url = urls[host] if host in urls else ''
-						bugdata['found'] = url
-						break
+				check_issue(desc['host'], val, issues, testruns, bugdata)
+			elif key.lower() in ['devicesuspend', 'deviceresume']:
+				check_device_time(key[6:].lower(), val, testruns, bugdata)
 		out.append(bugdata)
 	return out
 
@@ -109,7 +177,7 @@ def html_table(bugs, desc):
 	html = '<br><div class="stamp">Bugzilla Tracking (%s)</div><table>\n' % (subtitle)
 	html += '<tr>\n' +\
 		th.format('Bugzilla') + th.format('Description') + th.format('Status') +\
-		th.format('Kernel') + th.format('Mode') +\
+		th.format('Kernel') + th.format('Mode') + th.format('Count') +\
 		th.format('First Instance') + '</tr>\n'
 
 	num = 0
@@ -119,7 +187,7 @@ def html_table(bugs, desc):
 			status = td.format('center nowrap style="color:#f00;"', 'ISSUE HAPPENED')
 			timeline = tdlink.format(desc['host'], bug['found'])
 		else:
-			status = td.format('center nowrap style="color:#0f0;"', 'ISSUE NOT FOUND')
+			status = td.format('center nowrap style="color:#080;"', 'ISSUE NOT FOUND')
 			timeline = ''
 		# row classes - alternate row color
 		rcls = ['alt'] if num % 2 == 1 else []
@@ -129,6 +197,7 @@ def html_table(bugs, desc):
 		html += status									# bug status
 		html += td.format('center', desc['kernel'])		# kernel
 		html += td.format('center', desc['mode'])		# mode
+		html += td.format('center', bug['count'])		# count
 		html += td.format('center nowrap', timeline)	# timeline
 		html += '</tr>\n'
 		num += 1

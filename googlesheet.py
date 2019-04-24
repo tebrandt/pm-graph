@@ -1241,7 +1241,7 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, urlprefix):
 	print('spreadsheet id: %s' % id)
 	return True
 
-def pm_graph_report(indir, outpath, urlprefix, buglist):
+def pm_graph_report(indir, outpath, urlprefix, buglist, htmlonly):
 	desc = {'host':'', 'mode':'', 'kernel':'', 'sysinfo':''}
 	useturbo = False
 	issues = []
@@ -1366,6 +1366,9 @@ def pm_graph_report(indir, outpath, urlprefix, buglist):
 		os.path.join(indir, 'summary-issues.html'), title, bughtml)
 	devall = sg.createHTMLDeviceSummary(testruns,
 		os.path.join(indir, 'summary-devices.html'), title)
+	if htmlonly:
+		print('SUCCESS: summary html files updated')
+		return
 
 	# create the summary google sheet
 	pid = gdrive_mkdir(os.path.dirname(out))
@@ -1465,6 +1468,7 @@ if __name__ == '__main__':
 	parser.add_argument('-mail', nargs=4, metavar=('server', 'sender', 'receiver', 'subject'))
 	parser.add_argument('-genhtml', action='store_true')
 	parser.add_argument('-bugzilla', action='store_true')
+	parser.add_argument('-htmlonly', action='store_true')
 	parser.add_argument('-urlprefix', metavar='url', default='')
 	parser.add_argument('folder')
 	args = parser.parse_args()
@@ -1501,7 +1505,7 @@ if __name__ == '__main__':
 			indir, urlprefix = testinfo
 			if args.genhtml:
 				sg.genHtml(indir)
-			pm_graph_report(indir, args.tpath, urlprefix, buglist)
+			pm_graph_report(indir, args.tpath, urlprefix, buglist, args.htmlonly)
 	if args.create == 'test':
 		sys.exit(0)
 
