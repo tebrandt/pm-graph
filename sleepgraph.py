@@ -3977,6 +3977,7 @@ def createHTMLDeviceSummary(testruns, htmlfile, title):
 	return devall
 
 def createHTMLIssuesSummary(issues, htmlfile, title, extra=''):
+	multihost = len([e for e in issues if len(e['urls']) > 1]) > 0
 	html = summaryCSS('Issues Summary - SleepGraph', False)
 
 	# generate the html
@@ -3985,8 +3986,10 @@ def createHTMLIssuesSummary(issues, htmlfile, title, extra=''):
 	tdlink = '<a href="{1}">{0}</a>'
 	subtitle = '%d issues' % len(issues) if len(issues) > 0 else 'no issues'
 	html += '<div class="stamp">%s (%s)</div><table>\n' % (title, subtitle)
-	html += '<tr>\n' + th.format('Count') + th.format('Issue') +\
-		th.format('Hosts') + th.format('First Instance') + '</tr>\n'
+	html += '<tr>\n' + th.format('Issue')
+	if multihost:
+		html += th.format('Hosts')
+	html += th.format('Count') + th.format('First Instance') + '</tr>\n'
 
 	num = 0
 	for e in sorted(issues, key=lambda v:v['count'], reverse=True):
@@ -3996,9 +3999,10 @@ def createHTMLIssuesSummary(issues, htmlfile, title, extra=''):
 		# row classes - alternate row color
 		rcls = ['alt'] if num % 2 == 1 else []
 		html += '<tr class="'+(' '.join(rcls))+'">\n' if len(rcls) > 0 else '<tr>\n'
-		html += td.format('center', e['count'])		# count
 		html += td.format('left', e['line'])		# issue
-		html += td.format('center', len(e['urls']))	# hosts
+		if multihost:
+			html += td.format('center', len(e['urls']))	# hosts
+		html += td.format('center', e['count'])		# count
 		html += td.format('center nowrap', '<br>'.join(links))	# links
 		html += '</tr>\n'
 		num += 1

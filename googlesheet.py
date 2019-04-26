@@ -641,6 +641,12 @@ def formatSpreadsheet(id):
 		'startColumnIndex': 5,
 		'endColumnIndex': 6,
 	}
+	bugstatus_range = {
+		'sheetId': 3,
+		'startRowIndex': 1,
+		'startColumnIndex': 2,
+		'endColumnIndex': 3,
+	}
 	sigdig_range = {
 		'sheetId': 1,
 		'startRowIndex': 1,
@@ -662,6 +668,21 @@ def formatSpreadsheet(id):
 				}
 			},
 			'index': 0
+		},
+		'addConditionalFormatRule': {
+			'rule': {
+				'ranges': [ bugstatus_range ],
+				'booleanRule': {
+					'condition': {
+						'type': 'TEXT_NOT_CONTAINS',
+						'values': [ { 'userEnteredValue': 'PASS' } ]
+					},
+					'format': {
+						'textFormat': { 'foregroundColor': { 'red': 1.0 } }
+					}
+				}
+			},
+			'index': 1
 		}
 	},
 	{'updateBorders': {
@@ -691,6 +712,36 @@ def formatSpreadsheet(id):
 			'fields': 'userEnteredFormat.numberFormat'
 		},
 	},
+	{
+		'repeatCell': {
+			'range': {
+				'sheetId': 3, 'startRowIndex': 1,
+				'startColumnIndex': 4, 'endColumnIndex': 5,
+			},
+			'cell': {
+				'userEnteredFormat': {
+					'numberFormat': {'type': 'NUMBER', 'pattern': '0.00%;0%;0%'},
+					'horizontalAlignment': 'RIGHT'
+				}
+			},
+			'fields': 'userEnteredFormat.numberFormat,userEnteredFormat.horizontalAlignment'
+		}
+	},
+	{
+		'repeatCell': {
+			'range': {
+				'sheetId': 2, 'startRowIndex': 1,
+				'startColumnIndex': 3, 'endColumnIndex': 4,
+			},
+			'cell': {
+				'userEnteredFormat': {
+					'numberFormat': {'type': 'NUMBER', 'pattern': '0.00%;0%;0%'},
+					'horizontalAlignment': 'RIGHT'
+				}
+			},
+			'fields': 'userEnteredFormat.numberFormat,userEnteredFormat.horizontalAlignment'
+		}
+	},
 	{'autoResizeDimensions': {'dimensions': {'sheetId': 0,
 		'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 3}}},
 	{'autoResizeDimensions': {'dimensions': {'sheetId': 1,
@@ -700,6 +751,8 @@ def formatSpreadsheet(id):
 	{'autoResizeDimensions': {'dimensions': {'sheetId': 3,
 		'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 6}}},
 	{'autoResizeDimensions': {'dimensions': {'sheetId': 4,
+		'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 6}}},
+	{'autoResizeDimensions': {'dimensions': {'sheetId': 5,
 		'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 6}}
 	}]
 	body = {
@@ -722,18 +775,20 @@ def deleteDuplicate(folder, name):
 		except errors.HttpError, error:
 			doError('gdrive api error on delete file')
 
-def createSpreadsheet(testruns, devall, issues, folder, urlhost, title, useturbo):
+def createSpreadsheet(testruns, devall, issues, mybugs, folder, urlhost, title, useturbo):
 	global gsheet, gdrive
 
 	deleteDuplicate(folder, title)
 
 	# create the headers row
+	gsperc = '=({0}/{1})'
 	gslink = '=HYPERLINK("{0}","{1}")'
 	headers = [
 		['#','Mode','Host','Kernel','Test Start','Result','Kernel Issues','Suspend',
 		'Resume','Worst Suspend Device','Wsdt','Worst Resume Device','Wrdt'],
-		['Count', 'Kernel Issue', 'Hosts', 'First Instance'],
-		['Device Name', 'Average Time', 'Count', 'Worst Time', 'Host (worst time)', 'Link (worst time)']
+		['Kernel Issue', 'Hosts', 'Count', 'Rate', 'First Instance'],
+		['Device Name', 'Average Time', 'Count', 'Worst Time', 'Host (worst time)', 'Link (worst time)'],
+		['Bugzilla', 'Description', 'Status', 'Count', 'Rate', 'First Instance']
 	]
 	if useturbo:
 		headers[0].append('PkgPC10')
@@ -758,9 +813,10 @@ def createSpreadsheet(testruns, devall, issues, folder, urlhost, title, useturbo
 	issuedata = [{'values':headrows[1]}]
 	for e in sorted(issues, key=lambda v:v['count'], reverse=True):
 		r = {'values':[
-			{'userEnteredValue':{'numberValue':e['count']}},
 			{'userEnteredValue':{'stringValue':e['line']}},
 			{'userEnteredValue':{'numberValue':len(e['urls'])}},
+			{'userEnteredValue':{'numberValue':e['count']}},
+			{'userEnteredValue':{'formulaValue':gsperc.format(e['count'], len(testruns))}},
 		]}
 		for host in e['urls']:
 			url = os.path.join(urlhost, e['urls'][host])
@@ -768,6 +824,25 @@ def createSpreadsheet(testruns, devall, issues, folder, urlhost, title, useturbo
 				'userEnteredValue':{'formulaValue':gslink.format(url, host)}
 			})
 		issuedata.append(r)
+
+	# assemble the bugs in the spreadsheet
+	bugdata = [{'values':headrows[3]}]
+	for b in sorted(mybugs, key=lambda v:v['count'], reverse=True):
+		if b['found']:
+			status = 'FAIL'
+			timeline = {'formulaValue':gslink.format(b['found'], 'html')}
+		else:
+			status = 'PASS'
+			timeline = {'stringValue':''}
+		r = {'values':[
+			{'userEnteredValue':{'formulaValue':gslink.format(b['bugurl'], b['id'])}},
+			{'userEnteredValue':{'stringValue':b['desc']}},
+			{'userEnteredValue':{'stringValue':status}},
+			{'userEnteredValue':{'numberValue':b['count']}},
+			{'userEnteredValue':{'formulaValue':gsperc.format(b['count'], len(testruns))}},
+			{'userEnteredValue':timeline},
+		]}
+		bugdata.append(r)
 
 	# assemble the device data into spreadsheets
 	limit = 1
@@ -929,13 +1004,19 @@ def createSpreadsheet(testruns, devall, issues, folder, urlhost, title, useturbo
 				]
 			},
 			{
-				'properties': {'sheetId': 3, 'title': 'Suspend Devices'},
+				'properties': {'sheetId': 3, 'title': 'Bugzilla'},
+				'data': [
+					{'startRow': 0, 'startColumn': 0, 'rowData': bugdata}
+				]
+			},
+			{
+				'properties': {'sheetId': 4, 'title': 'Suspend Devices'},
 				'data': [
 					{'startRow': 0, 'startColumn': 0, 'rowData': devdata['suspend']}
 				]
 			},
 			{
-				'properties': {'sheetId': 4, 'title': 'Resume Devices'},
+				'properties': {'sheetId': 5, 'title': 'Resume Devices'},
 				'data': [
 					{'startRow': 0, 'startColumn': 0, 'rowData': devdata['resume']}
 				]
@@ -1372,7 +1453,8 @@ def pm_graph_report(indir, outpath, urlprefix, buglist, htmlonly):
 
 	# create the summary google sheet
 	pid = gdrive_mkdir(os.path.dirname(out))
-	file = createSpreadsheet(testruns, devall, issues, pid, urlprefix, os.path.basename(out), useturbo)
+	file = createSpreadsheet(testruns, devall, issues, mybugs, pid,
+		urlprefix, os.path.basename(out), useturbo)
 	print('SUCCESS: spreadsheet created -> %s' % file)
 
 def doError(msg, help=False):

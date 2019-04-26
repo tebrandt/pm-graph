@@ -62,7 +62,7 @@ def check_issue(host, val, issues, testruns, bugdata):
 			urls = issue['urls']
 			url = urls[host] if host in urls else ''
 			bugdata['found'] = url
-			bugdata['count'] = countFormat(issue['count'], len(testruns))
+			bugdata['count'] = issue['count']
 			break
 
 def getComparison(mstr):
@@ -112,7 +112,7 @@ def check_call_time(mstr, testruns, bugdata):
 				match[name]['count'] += 1
 	for i in sorted(match, key=lambda k:match[k]['count'], reverse=True):
 		bugdata['found'] = match[i]['url']
-		bugdata['count'] = countFormat(match[i]['count'], len(testruns))
+		bugdata['count'] = match[i]['count']
 		break
 
 def check_device_time(phase, mstr, testruns, bugdata):
@@ -144,7 +144,7 @@ def check_device_time(phase, mstr, testruns, bugdata):
 				match[name]['count'] += 1
 	for i in sorted(match, key=lambda k:match[k]['count'], reverse=True):
 		bugdata['found'] = match[i]['url']
-		bugdata['count'] = countFormat(match[i]['count'], len(testruns))
+		bugdata['count'] = match[i]['count']
 		break
 
 def functionInfo(text):
@@ -229,7 +229,7 @@ def bugzilla_check(buglist, desc, testruns, issues):
 			'id': id,
 			'desc': buglist[id]['desc'],
 			'bugurl': buglist[id]['url'],
-			'count': countFormat(0, len(testruns)),
+			'count': 0,
 			'found': '',
 		}
 		for key in config.options(idesc):
@@ -258,7 +258,7 @@ def html_table(bugs, desc):
 		th.format('First Instance') + '</tr>\n'
 
 	num = 0
-	for bug in bugs:
+	for bug in sorted(bugs, key=lambda v:v['count'], reverse=True):
 		bugurl = tdlink.format(bug['id'], bug['bugurl'])
 		if bug['found']:
 			status = td.format('center nowrap style="color:#f00;"', 'ISSUE HAPPENED')
