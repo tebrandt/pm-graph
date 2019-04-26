@@ -1275,7 +1275,7 @@ def pm_graph_report(indir, outpath, urlprefix, buglist, htmlonly):
 			'time': dirtime, 'result': '',
 			'issues': '', 'suspend': 0, 'resume': 0, 'sus_worst': '',
 			'sus_worsttime': 0, 'res_worst': '', 'res_worsttime': 0,
-			'url': dir, 'devlist': dict() }
+			'url': dir, 'devlist': dict(), 'funclist': [] }
 		# find the files and parse them
 		found = dict()
 		for file in os.listdir('%s/%s' % (indir, dir)):
