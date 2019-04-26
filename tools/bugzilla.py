@@ -65,7 +65,7 @@ def check_issue(host, val, issues, testruns, bugdata):
 			bugdata['count'] = countFormat(issue['count'], len(testruns))
 			break
 
-def check_device_time(phase, mstr, testruns, bugdata):
+def getComparison(mstr):
 	greater = True
 	if '>' in mstr:
 		tmp = mstr.split('>')
@@ -73,13 +73,51 @@ def check_device_time(phase, mstr, testruns, bugdata):
 		greater = False
 		tmp = mstr.split('<')
 	else:
-		return
-	devstr = tmp[0].strip()
+		return ('', -1, greater)
+	name = tmp[0].strip()
 	try:
 		target = float(tmp[-1].strip())
 	except:
+		return ('', -1, greater)
+	return (name, target, greater)
+
+def check_call_time(mstr, testruns, bugdata):
+	callstr, target, greater = getComparison(mstr)
+	if not callstr or target < 0:
 		return
-	if not devstr:
+	match = dict()
+	name, args, tm = functionInfo(callstr)
+	for data in testruns:
+		for f in data['funclist']:
+			n, a, t = functionInfo(f)
+			if not re.match(name, n):
+				continue
+			argmatch = True
+			for arg in args:
+				if arg not in a or not re.match(args[arg], a[arg]):
+					argmatch = False
+			if not argmatch or t < 0:
+				continue
+			if name not in match:
+				match[name] = {'count':0,'worst':0,'url':''}
+			if greater and t > target:
+				if t > match[name]['worst']:
+					match[name]['worst'] = t
+					match[name]['url'] = data['url']
+				match[name]['count'] += 1
+			elif not greater and t < target:
+				if t < match[name]['worst']:
+					match[name]['worst'] = t
+					match[name]['url'] = data['url']
+				match[name]['count'] += 1
+	for i in sorted(match, key=lambda k:match[k]['count'], reverse=True):
+		bugdata['found'] = match[i]['url']
+		bugdata['count'] = countFormat(match[i]['count'], len(testruns))
+		break
+
+def check_device_time(phase, mstr, testruns, bugdata):
+	devstr, target, greater = getComparison(mstr)
+	if not devstr or target < 0:
 		return
 	match = dict()
 	for data in testruns:
@@ -108,6 +146,41 @@ def check_device_time(phase, mstr, testruns, bugdata):
 		bugdata['found'] = match[i]['url']
 		bugdata['count'] = countFormat(match[i]['count'], len(testruns))
 		break
+
+def functionInfo(text):
+	# function time is at the end
+	tm = -1
+	if ')' in text:
+		tmp = text.split(')')
+		text = tmp[0]
+		tstr = tmp[1].split('(')[-1]
+		if re.match('[0-9\.]*ms', tstr):
+			tm = float(tstr[:-2])
+	# get the function name and args
+	tmp = text.split('(')
+	name, args = tmp[0], dict()
+	if len(tmp) > 1:
+		for arg in tmp[1].split(','):
+			if '=' not in arg:
+				continue
+			atmp = arg.strip().split('=')
+			args[atmp[0].strip()] = atmp[-1].strip()
+	return (name, args, tm)
+
+def find_function(mstr, testruns):
+	name, args, tm = functionInfo(mstr)
+	for data in testruns:
+		for f in data['funclist']:
+			n, a, t = functionInfo(f)
+			if not re.match(name, n):
+				continue
+			argmatch = True
+			for arg in args:
+				if arg not in a or not re.match(args[arg], a[arg]):
+					argmatch = False
+			if argmatch:
+				return True
+	return False
 
 def find_device(mstr, testruns):
 	for data in testruns[:5]:
@@ -143,6 +216,8 @@ def bugzilla_check(buglist, desc, testruns, issues):
 					applicable = (desc['mode'] in val)
 				elif key.lower() == 'device':
 					applicable = find_device(val, testruns)
+				elif key.lower() == 'call':
+					applicable = find_function(val, testruns)
 				else:
 					applicable = (val.lower() in desc['sysinfo'].lower())
 				if not applicable:
@@ -165,6 +240,8 @@ def bugzilla_check(buglist, desc, testruns, issues):
 				check_issue(desc['host'], val, issues, testruns, bugdata)
 			elif key.lower() in ['devicesuspend', 'deviceresume']:
 				check_device_time(key[6:].lower(), val, testruns, bugdata)
+			elif key.lower() == 'calltime':
+				check_call_time(val, testruns, bugdata)
 		out.append(bugdata)
 	return out
 

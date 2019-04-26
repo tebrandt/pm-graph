@@ -5847,7 +5847,7 @@ def find_in_html(html, start, end, firstonly=True):
 		return ''
 	return out
 
-def data_from_html(file, outpath, issues):
+def data_from_html(file, outpath, issues, fulldetail=False):
 	if '<html>' not in file:
 		html = open(file, 'r').read()
 		sysvals.htmlfile = os.path.relpath(file, outpath)
@@ -5961,6 +5961,8 @@ def data_from_html(file, outpath, issues):
 	}
 	for key in extra:
 		data[key] = extra[key]
+	if fulldetail:
+		data['funclist'] = find_in_html(html, '<div title="', '" class="traceevent"', False)
 	return data
 
 def genHtml(subdir):

@@ -1285,7 +1285,7 @@ def pm_graph_report(indir, outpath, urlprefix, buglist, htmlonly):
 
 		if 'html' in found:
 			# pass or fail, use html data
-			hdata = sg.data_from_html(found['html'], indir, issues)
+			hdata = sg.data_from_html(found['html'], indir, issues, True)
 			if hdata:
 				data = hdata
 				data['time'] = dirtime
