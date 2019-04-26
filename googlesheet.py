@@ -79,9 +79,33 @@ def healthCheck(data):
 		h += 20.0 * float(data['syslpi'])/total
 	data['health'] = int(100 * h / hmax)
 
+def columnMap(file, head, required):
+	# create map of column name to index
+	colidx = dict()
+	s, e, idx = head.find('<th') + 3, head.rfind('</th>'), 0
+	for key in head[s:e].replace('</th>', '').split('<th'):
+		name = re.sub('[^>]*>', '', key.strip().lower(), 1)
+		colidx[name] = idx
+		idx += 1
+	for name in required:
+		if name not in colidx:
+			doError('"%s" column missing in %s' % (name, file))
+	return colidx
+
+def columnValues(colidx, row):
+	# create an array of column values from this row
+	values = []
+	out = row.split('<td')
+	for i in out[1:]:
+		endtrim = re.sub('</td>.*', '', i.replace('\n', ''))
+		value = re.sub('[^>]*>', '', endtrim, 1)
+		values.append(value)
+	return values
+
 def infoDevices(folder, file, basename):
 	global deviceinfo
 
+	colidx = dict()
 	html = open(file, 'r').read()
 	for tblock in html.split('<div class="stamp">'):
 		x = re.match('.*\((?P<t>[A-Z]*) .*', tblock)
@@ -91,21 +115,28 @@ def infoDevices(folder, file, basename):
 		if type not in deviceinfo:
 			continue
 		for dblock in tblock.split('<tr'):
-			if '</td>' not in dblock:
+			if '<th>' in dblock:
+				# check for requried columns
+				colidx = columnMap(file, dblock, ['device name', 'average time',
+					'count', 'worst time', 'host (worst time)', 'link (worst time)'])
 				continue
-			vals = sg.find_in_html(dblock, '<td[a-z= ]*>', '</td>', False)
-			if len(vals) < 5:
-				doError('summary file is out of date, please rerun sleepgraph on\n%s' % file)
-			x, url = re.match('<a href="(?P<u>.*)">', vals[5]), ''
+			if len(colidx) == 0 or '<td' not in dblock or '</td>' not in dblock:
+				continue
+			values = columnValues(colidx, dblock)
+			x, url = re.match('<a href="(?P<u>.*)">', values[colidx['link (worst time)']]), ''
 			if x:
 				url = os.path.relpath(file.replace(basename, x.group('u')), folder)
-			name = vals[0]
+			name = values[colidx['device name']]
+			count = int(values[colidx['count']])
+			avgtime = float(values[colidx['average time']].split()[0])
+			wrstime = float(values[colidx['worst time']].split()[0])
+			host = values[colidx['host (worst time)']]
 			entry = {
 				'name': name,
-				'count': int(vals[2]),
-				'total': int(vals[2]) * float(vals[1].split()[0]),
-				'worst': float(vals[3].split()[0]),
-				'host': vals[4],
+				'count': count,
+				'total': count * avgtime,
+				'worst': wrstime,
+				'host': host,
 				'url': url
 			}
 			if name in deviceinfo[type]:
@@ -120,23 +151,27 @@ def infoDevices(folder, file, basename):
 
 def infoIssues(folder, file, basename):
 
+	colidx = dict()
 	issues = []
 	html = open(file, 'r').read()
 	tables = sg.find_in_html(html, '<table>', '</table>', False)
 	if len(tables) < 1:
 		return issues
 	for issue in tables[0].split('<tr'):
-		if '<td' not in issue or '</td>' not in issue:
+		if '<th>' in issue:
+			# check for requried columns
+			colidx = columnMap(file, issue, ['issue', 'count', 'first instance'])
+			print colidx
 			continue
-		values = sg.find_in_html(issue, '<td[a-z= ]*>', '</td>', False)
-		if len(values) < 4:
-			doError('summary file is out of date, please rerun sleepgraph on\n%s' % file)
-		x, url = re.match('<a href="(?P<u>.*)">.*', values[3]), ''
+		if len(colidx) == 0 or '<td' not in issue or '</td>' not in issue:
+			continue
+		values = columnValues(colidx, issue)
+		x, url = re.match('<a href="(?P<u>.*)">.*', values[colidx['first instance']]), ''
 		if x:
 			url = os.path.relpath(file.replace(basename, x.group('u')), folder)
 		issues.append({
-			'count': int(values[0]),
-			'line': values[1],
+			'count': int(values[colidx['count']]),
+			'line': values[colidx['issue']],
 			'url': url,
 		})
 	return issues
@@ -155,15 +190,9 @@ def info(file, data, args):
 	html = open(file, 'r').read()
 	for test in html.split('<tr'):
 		if '<th>' in test:
-			# create map of column name to index
-			s, e, idx = test.find('<th>') + 4, test.rfind('</th>'), 0
-			for key in test[s:e].replace('</th>', '').split('<th>'):
-				colidx[key.strip().lower()] = idx
-				idx += 1
 			# check for requried columns
-			for name in ['kernel', 'host', 'mode', 'result', 'test time', 'suspend', 'resume']:
-				if name not in colidx:
-					doError('"%s" column missing in %s' % (name, file))
+			colidx = columnMap(file, test, ['kernel', 'host', 'mode',
+				'result', 'test time', 'suspend', 'resume'])
 			continue
 		if len(colidx) == 0 or 'class="head"' in test or '<html>' in test:
 			continue
@@ -1565,7 +1594,7 @@ if __name__ == '__main__':
 		doError('-mail is not compatible with stype=sheet, choose stype=text/html', False)
 
 	buglist = dict()
-	if args.bugzilla:
+	if args.bugzilla and args.create in ['test', 'both']:
 		print('Loading open bugzilla issues...')
 		buglist = bz.pm_stress_test_issues()
 
