@@ -161,7 +161,6 @@ def infoIssues(folder, file, basename):
 		if '<th>' in issue:
 			# check for requried columns
 			colidx = columnMap(file, issue, ['issue', 'count', 'first instance'])
-			print colidx
 			continue
 		if len(colidx) == 0 or '<td' not in issue or '</td>' not in issue:
 			continue
@@ -1463,7 +1462,7 @@ def pm_graph_report(indir, outpath, urlprefix, buglist, htmlonly):
 	out = outpath.format(**desc)
 
 	# check the status of open bugs against this multitest
-	bughtml = ''
+	bughtml, mybugs = '', []
 	if len(buglist) > 0:
 		mybugs = bz.bugzilla_check(buglist, desc, testruns, issues)
 		bughtml = bz.html_table(mybugs, desc)
