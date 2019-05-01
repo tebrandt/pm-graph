@@ -1281,7 +1281,7 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, buglist, urlpref
 			if 'match' not in buglist[id]:
 				continue
 			matches = buglist[id]['match']
-			for m in sorted(matches, key=lambda k:k['count'], reverse=True):
+			for m in sorted(matches, key=lambda k:(k['count'], k['host'], k['mode']), reverse=True):
 				r = {'values':[
 					{'userEnteredValue':{'stringValue':''}},
 					{'userEnteredValue':{'stringValue':''}},
