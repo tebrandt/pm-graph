@@ -44,12 +44,12 @@ def getissues(urlprefix, depissue):
 			if not att['is_obsolete'] and att['file_name'] == 'issue.def':
 				idef = base64.b64decode(att['data'])
 				break
-		if idef:
-			out[id] = {
-				'def': idef,
-				'url': showurl.format(id),
-				'desc': bug['summary']
-			}
+		out[id] = {
+			'def': idef,
+			'matches': 0,
+			'url': showurl.format(id),
+			'desc': bug['summary']
+		}
 	return out
 
 def countFormat(count, total):
@@ -196,6 +196,8 @@ def find_device(mstr, testruns):
 def bugzilla_check(buglist, desc, testruns, issues):
 	out = []
 	for id in buglist:
+		if not buglist[id]['def']:
+			continue
 		# check each bug to see if it is applicable and exists
 		applicable = True
 		# parse the config file which describes the issue
